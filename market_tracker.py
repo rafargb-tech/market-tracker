@@ -30,14 +30,12 @@ SECTIONS = [
         ("Meta Platforms", "META"),
         ("Tesla",          "TSLA"),
     ]),
-    ("US TREASURIES", [
-        ("US 2Y Yield",    "^IRX"),
-        ("US 5Y Yield",    "^FVX"),
-        ("US 10Y Yield",   "^TNX"),
-        ("US 30Y Yield",   "^TYX"),
-        ("TLT (20Y+ ETF)", "TLT"),
-        ("IEF (7-10Y ETF)","IEF"),
-        ("SHY (1-3Y ETF)", "SHY"),
+    ("US TREASURIES (ETFs)", [
+        ("TLT (20Y+ ETF)",  "TLT"),
+        ("IEF (7-10Y ETF)", "IEF"),
+        ("IEI (3-7Y ETF)",  "IEI"),
+        ("SHY (1-3Y ETF)",  "SHY"),
+        ("BIL (0-3M ETF)",  "BIL"),
     ]),
     ("GLOBAL BONDS (ETFs)", [
         ("Bund 10Y · iShares (EUR)", "EXX6.DE"),   # iShares Bund 7-10Y
@@ -107,6 +105,15 @@ SECTIONS = [
 # ── MACRO ─────────────────────────────────────────────────────────────────────
 
 MACRO_DATA = {
+    "US YIELD CURVE": [
+        ("US 3M Yield",  "DGS3MO", "%", "FRED", "T-Bill 3 meses"),
+        ("US 2Y Yield",  "DGS2",   "%", "FRED", "Treasury 2 años"),
+        ("US 5Y Yield",  "DGS5",   "%", "FRED", "Treasury 5 años"),
+        ("US 10Y Yield", "DGS10",  "%", "FRED", "Treasury 10 años"),
+        ("US 30Y Yield", "DGS30",  "%", "FRED", "Treasury 30 años"),
+        ("10Y - 2Y",     "T10Y2Y", "pts", "FRED", "Spread curva. Negativo = invertida"),
+        ("10Y - 3M",     "T10Y3M", "pts", "FRED", "Spread curva corta"),
+    ],
     "UNITED STATES": [
         ("Fed Funds Rate",    "FEDFUNDS",              "%",   "FRED", "Target upper bound"),
         ("CPI YoY",           "CPIAUCSL",              "%",   "FRED", "All items, not seas. adj."),
