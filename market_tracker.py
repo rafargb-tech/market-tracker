@@ -203,9 +203,11 @@ def get_yf_macro(ticker):
         df = yf.download(ticker, period="2y", auto_adjust=True, progress=False)
         if df.empty: return None, None, None
         s = df["Close"].dropna()
-        latest   = float(s.iloc[-1])
-        chg_last = float(s.iloc[-1] - s.iloc[-2]) if len(s) > 1 else None
-        chg_yoy  = float(s.iloc[-1] - s.iloc[-252]) if len(s) > 252 else None
+        if hasattr(s, 'columns'):  # MultiIndex — coger primera columna
+            s = s.iloc[:, 0]
+        latest   = float(s.iloc[-1].item() if hasattr(s.iloc[-1], 'item') else s.iloc[-1])
+        chg_last = float((s.iloc[-1] - s.iloc[-2]).item()) if len(s) > 1 else None
+        chg_yoy  = float((s.iloc[-1] - s.iloc[-252]).item()) if len(s) > 252 else None
         return latest, chg_last, chg_yoy
     except Exception:
         return None, None, None
