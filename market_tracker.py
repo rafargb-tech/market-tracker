@@ -1,6 +1,6 @@
 """
 Market Tracker v2 - Índices, Bonos, Commodities + Macro Dashboard
-Requiere: pip install yfinance openpyxl pandas_datareader
+Requiere: pip install yfinance openpyxl
 """
 
 import yfinance as yf
@@ -39,13 +39,13 @@ SECTIONS = [
         ("IEF (7-10Y ETF)","IEF"),
         ("SHY (1-3Y ETF)", "SHY"),
     ]),
-    ("GLOBAL BONDS", [
-        ("Bund 10Y (Germany)", "^DE10YB"),
-        ("Gilt 10Y (UK)",      "^GB10YB"),
-        ("JGB 10Y (Japan)",    "^JP10YB"),
-        ("BTP 10Y (Italy)",    "^IT10YB"),
-        ("OAT 10Y (France)",   "^FR10YB"),
-        ("Bonos 10Y (Spain)",  "^ES10YB"),
+    ("GLOBAL BONDS (ETFs)", [
+        ("Bund 10Y · iShares (EUR)", "EXX6.DE"),   # iShares Bund 7-10Y
+        ("Gilt 10Y · iShares (GBP)", "IGLT.L"),    # iShares Core UK Gilts
+        ("JGB · iShares (JPY)",      "2561.T"),     # iShares JPY Govt Bond
+        ("Italy BTP · iShares",      "ITPS.MI"),   # iShares BTP
+        ("EU Govt Bond · iShares",   "IEAG.AS"),   # iShares Core Euro Govt
+        ("EM Bond · iShares (USD)",  "EMB"),        # iShares EM USD Bond
     ]),
     ("COMMODITIES", [
         ("Gold",        "GC=F"),
@@ -173,16 +173,27 @@ def build_market_rows(prices_df):
     return rows
 
 def get_fred_series(series_id):
+    """Descarga datos de FRED via API REST pública (sin API key ni pandas_datareader)."""
     try:
-        import pandas_datareader.data as web
-        df = web.DataReader(series_id, "fred",
-                            start=datetime.today()-timedelta(days=800),
-                            end=datetime.today())
-        s = df[series_id].dropna()
-        if len(s) == 0: return None, None, None
-        latest   = float(s.iloc[-1])
-        chg_last = float(s.iloc[-1] - s.iloc[-2]) if len(s) > 1 else None
-        chg_yoy  = float(s.iloc[-1] - s.iloc[-13]) if len(s) > 13 else None
+        import urllib.request, json
+        start = (datetime.today() - timedelta(days=800)).strftime("%Y-%m-%d")
+        url = (f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
+               f"&vintage_date={datetime.today().strftime('%Y-%m-%d')}")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            lines = r.read().decode().strip().split("\n")[1:]  # skip header
+        vals = []
+        for line in lines:
+            parts = line.split(",")
+            if len(parts) == 2 and parts[1].strip() not in ("", "."):
+                try:
+                    vals.append(float(parts[1]))
+                except ValueError:
+                    pass
+        if not vals: return None, None, None
+        latest   = vals[-1]
+        chg_last = vals[-1] - vals[-2]  if len(vals) > 1  else None
+        chg_yoy  = vals[-1] - vals[-13] if len(vals) > 13 else None
         return latest, chg_last, chg_yoy
     except Exception:
         return None, None, None
