@@ -219,6 +219,9 @@ def get_yf_macro(ticker):
     except Exception:
         return None, None, None
 
+# Series FRED que son índices de nivel (no % directos) — hay que calcular variación YoY
+FRED_INDEX_SERIES = {"CPIAUCSL", "CPILFESL", "CP0000EZ19M086NEST", "CLVMNACSCAB1GQEA19"}
+
 def build_macro_data():
     results = {}
     for region, indicators in MACRO_DATA.items():
@@ -229,6 +232,13 @@ def build_macro_data():
                 val, chg_last, chg_yoy = get_yf_macro(series_id)
             else:
                 val, chg_last, chg_yoy = get_fred_series(series_id)
+                # Convertir índices de nivel a variación YoY%
+                if series_id in FRED_INDEX_SERIES and val is not None and chg_yoy is not None:
+                    base = val - chg_yoy
+                    if base != 0:
+                        val      = (chg_yoy / base) * 100   # YoY%
+                        chg_last = None                      # chg_last en puntos de índice no es útil
+                        chg_yoy  = None                      # ya está incorporado en val
             results[region].append((name, unit, val, chg_last, chg_yoy, note))
     return results
 
