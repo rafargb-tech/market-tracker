@@ -202,7 +202,8 @@ def get_fred_series(series_id):
         chg_last = vals[-1] - vals[-2]  if len(vals) > 1  else None
         chg_yoy  = vals[-1] - vals[-13] if len(vals) > 13 else None
         return latest, chg_last, chg_yoy
-    except Exception:
+    except Exception as e:
+        print(f"     ⚠️  FRED {series_id}: {e}")
         return None, None, None
 
 def get_yf_macro(ticker):
@@ -1382,6 +1383,10 @@ def build_substack_html(narrative, phase_idx, phase_name, signals, sector_data, 
         s = signals.get(name, (None, None, None))
         return f"{s[1]:.2f}" if s[1] is not None else "N/A"
 
+    # Debug temporal
+    print(f"   [DEBUG] score: {score}")
+    print(f"   [DEBUG] signals: { {k: v[1] for k,v in signals.items()} }")
+
     phase_color_hex = {
         0: "#27AE60", 1: "#F39C12", 2: "#E74C3C", 3: "#8E44AD"
     }[phase_idx]
@@ -1397,11 +1402,26 @@ def build_substack_html(narrative, phase_idx, phase_name, signals, sector_data, 
     )
 
     score_str = " · ".join(
-        f"<b>{PHASE_NAMES[i].split()[0]} {PHASE_NAMES[i].split()[1][0]}</b>: {score[i]}{'◄' if i == phase_idx else ''}"
+        f"<b>{PHASE_NAMES[i]}</b>: {score[i]}{'◄' if i == phase_idx else ''}"
         for i in range(4)
     )
 
-    narrative_html = "".join(f"<p>{p.strip()}</p>" for p in narrative.split("\n") if p.strip()) if narrative else ""
+    # Convertir markdown básico a HTML
+    def md_to_html(text):
+        if not text:
+            return ""
+        import re
+        # Negrita
+        text = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', text)
+        # Cursiva
+        text = re.sub(r'\*(.*?)\*', r'<em>\1</em>', text)
+        # Separadores
+        text = re.sub(r'\n---+\n', '<hr>', text)
+        # Párrafos
+        paragraphs = [p.strip() for p in text.split("\n") if p.strip() and p.strip() != "---"]
+        return "".join(f"<p>{p}</p>" for p in paragraphs)
+
+    narrative_html = md_to_html(narrative) if narrative else ""
 
     return f"""
 <div style="font-family: Georgia, serif; max-width: 680px; margin: 0 auto; color: #1a1a1a;">
