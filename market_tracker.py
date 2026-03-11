@@ -663,12 +663,12 @@ def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str):
     phase_color = PHASE_COLORS[phase_idx]
 
     # ── Título ──
-    ws.merge_cells("A1:I1")
+    ws.merge_cells("A1:H1")
     ws["A1"] = "Sector Pulse Investing (SPI)"
     ws["A1"].font = fnt(bold=True, size=14); ws["A1"].fill = fill(DARK_BG); ws["A1"].alignment = left(1)
-    ws.merge_cells("J1:M1")
-    ws["J1"] = today_str
-    ws["J1"].font = fnt(bold=True, color=LIGHT_GRAY, size=11); ws["J1"].fill = fill(DARK_BG); ws["J1"].alignment = center()
+    ws.merge_cells("I1:M1")
+    ws["I1"] = today_str
+    ws["I1"].font = fnt(bold=True, color=LIGHT_GRAY, size=11); ws["I1"].fill = fill(DARK_BG); ws["I1"].alignment = center()
     ws.row_dimensions[1].height = 22
 
     # ── Fase detectada ──
