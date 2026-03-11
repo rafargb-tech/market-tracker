@@ -925,7 +925,8 @@ def build_highlights(market_rows, sector_data, signals, phase_idx):
 
 def send_discord(webhook_url, output_file, phase_idx, score, signals, sector_data, market_rows, today_str):
     """Envía resumen + Excel adjunto al canal de Discord via webhook."""
-    import urllib.request, urllib.parse, json, os, mimetypes
+    import os, json
+    import requests
 
     if not webhook_url:
         print("⚠️  DISCORD_WEBHOOK_URL no configurada, saltando envío.")
@@ -964,7 +965,7 @@ def send_discord(webhook_url, output_file, phase_idx, score, signals, sector_dat
     # Destacados
     highlights = build_highlights(market_rows, sector_data, signals, phase_idx)
     if highlights:
-        hl_str = "\n".join(f"  {h}" for h in highlights[:6])  # max 6
+        hl_str = "\n".join(f"  {h}" for h in highlights[:6])
     else:
         hl_str = "  Sin movimientos destacados hoy."
 
@@ -997,42 +998,27 @@ def send_discord(webhook_url, output_file, phase_idx, score, signals, sector_dat
         "footer": {"text": "SPI · Sector Pulse Investing  |  Datos: Yahoo Finance + FRED"},
     }
 
-    payload = json.dumps({"embeds": [embed]}).encode("utf-8")
-
-    # Enviar mensaje embed primero
+    # Enviar embed
     try:
-        req = urllib.request.Request(
+        r = requests.post(
             webhook_url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST"
+            json={"embeds": [embed]},
+            timeout=15
         )
-        with urllib.request.urlopen(req, timeout=15) as r:
-            print(f"   Discord embed: {r.status}")
+        print(f"   Discord embed: {r.status_code} {r.text[:200]}")
     except Exception as e:
         print(f"   ⚠️  Error enviando embed Discord: {e}")
 
-    # Enviar Excel como archivo adjunto (multipart)
+    # Enviar Excel como archivo adjunto
     try:
-        boundary = "----MarketTrackerBoundary"
-        with open(output_file, "rb") as f:
-            file_data = f.read()
-
         filename = os.path.basename(output_file)
-        body = (
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-            f"Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n"
-        ).encode() + file_data + f"\r\n--{boundary}--\r\n".encode()
-
-        req2 = urllib.request.Request(
-            webhook_url,
-            data=body,
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-            method="POST"
-        )
-        with urllib.request.urlopen(req2, timeout=30) as r:
-            print(f"   Discord Excel: {r.status}")
+        with open(output_file, "rb") as f:
+            r2 = requests.post(
+                webhook_url,
+                files={"file": (filename, f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                timeout=30
+            )
+        print(f"   Discord Excel: {r2.status_code} {r2.text[:200]}")
     except Exception as e:
         print(f"   ⚠️  Error enviando Excel Discord: {e}")
 
