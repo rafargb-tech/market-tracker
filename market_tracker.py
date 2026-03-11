@@ -931,6 +931,8 @@ def send_discord(webhook_url, output_file, phase_idx, score, signals, sector_dat
         print("⚠️  DISCORD_WEBHOOK_URL no configurada, saltando envío.")
         return
 
+    print(f"   URL recibida: {webhook_url[:40]}... (longitud: {len(webhook_url)})")
+
     phase_name  = PHASE_NAMES[phase_idx]
     phase_emoji = PHASE_EMOJIS[phase_idx]
 
