@@ -1127,7 +1127,13 @@ def scrape_advfn(date_str):
 
     url = f"https://www.advfn.com/world-daily-market-briefing/{date_str}"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate",
+            "Connection": "keep-alive",
+        })
         with urllib.request.urlopen(req, timeout=15) as r:
             html = r.read().decode("utf-8", errors="ignore")
 
@@ -1247,7 +1253,7 @@ Longitud: 3-4 párrafos. Tono: analítico, sin alarmismo, con perspectiva de med
 
     try:
         payload = json.dumps({
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-6",
             "max_tokens": 1000,
             "system": system_prompt,
             "messages": [{"role": "user", "content": user_prompt}]
@@ -1279,10 +1285,14 @@ def publish_substack(substack_sid, publication_slug, title, body_html, today_str
     import urllib.request, json
 
     base_url = "https://substack.com/api/v1"
+    # Limpiar la cookie — puede venir con o sin el prefijo "s:"
+    sid_clean = substack_sid.strip()
     headers  = {
         "Content-Type": "application/json",
-        "Cookie": f"substack.sid={substack_sid}",
-        "User-Agent": "Mozilla/5.0",
+        "Cookie": f"substack.sid={sid_clean}",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Referer": "https://substack.com/",
+        "Origin": "https://substack.com",
     }
 
     # 1. Crear draft
