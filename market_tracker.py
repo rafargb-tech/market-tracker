@@ -481,11 +481,12 @@ def detect_cycle_phase(macro_results):
     rates_falling  = fed_chg   is not None and fed_chg   < 0
     rates_high     = fed_val   is not None and fed_val   > 4.0
 
-    # Curva de tipos
-    curve_inverted    = spread_val is not None and spread_val < 0       # invertida → warning recesión
+    # Curva de tipos — 4 estados con umbrales históricos calibrados
+    curve_inverted    = spread_val is not None and spread_val < 0          # invertida → RecT/ExpL
     curve_normalizing = (spread_val is not None and spread_chg is not None
-                         and spread_val < 0.5 and spread_chg > 0)       # normalizando desde invertida → RecL
-    curve_steep       = spread_val is not None and spread_val > 1.0     # empinada → ExpT
+                         and spread_val < 0.5 and spread_chg > 0)          # saliendo de inversión → RecL
+    curve_normal      = spread_val is not None and 0.3 < spread_val <= 1.5 # normalizada → compatible ExpT/ExpL
+    curve_steep       = spread_val is not None and spread_val > 1.5        # empinada genuina → ExpT fuerte
 
     # Nivel del 10Y
     y10_rising  = y10_chg is not None and y10_chg > 0
@@ -494,7 +495,11 @@ def detect_cycle_phase(macro_results):
 
     # ── Señales para mostrar en pantalla (6 pilares) ──────────────────────────
     if spread_val is not None:
-        curve_txt = f"{'Invertida ▼' if curve_inverted else ('Normalizando ↗' if curve_normalizing else ('Empinada ▲' if curve_steep else 'Plana →'))}"
+        if curve_inverted:    curve_txt = "Invertida ▼"
+        elif curve_normalizing: curve_txt = "Normalizando ↗"
+        elif curve_steep:     curve_txt = "Empinada ▲"
+        elif curve_normal:    curve_txt = "Normal →"
+        else:                 curve_txt = "Plana →"
     else:
         curve_txt = "N/A"
 
@@ -534,19 +539,32 @@ def detect_cycle_phase(macro_results):
     if rates_falling:  score[3] += 1; score[0] += 1
 
     # Señales de curva (peso 2 — indicador adelantado)
-    if curve_steep:       score[0] += 2   # curva empinada → expansión temprana
-    if curve_inverted:    score[1] += 1; score[2] += 2  # invertida → expL tardía o recesión próxima
-    if curve_normalizing: score[3] += 2   # normalizando → saliendo de recesión
+    if curve_steep:                        score[0] += 2   # empinada genuina → ExpT fuerte
+    if curve_normal:    score[0] += 1;     score[1] += 1   # normal → compatible ambas expansiones
+    if curve_inverted:  score[1] += 1;     score[2] += 2   # invertida → ExpL tardía o RecT próxima
+    if curve_normalizing:                  score[3] += 2   # normalizando → RecL
+
+    # Señal extra: curva muy invertida refuerza RecT
+    if spread_val is not None and spread_val < -0.5:
+        score[2] += 1
 
     # Señales del 10Y (peso 1)
-    if y10_rising  and gdp_growing:  score[1] += 1  # tipos largos subiendo con crecimiento → ExpL
+    if y10_rising  and gdp_growing:     score[1] += 1  # tipos largos subiendo con crecimiento → ExpL
     if y10_rising  and not gdp_growing: score[2] += 1  # tipos largos subiendo sin crecimiento → RecT
     if y10_falling and not gdp_growing: score[3] += 1  # tipos largos bajando en recesión → RecL
-    if y10_falling and gdp_growing:  score[0] += 1  # tipos largos bajando con crecimiento → ExpT
+    if y10_falling and gdp_growing:     score[0] += 1  # tipos largos bajando con crecimiento → ExpT
 
-    # Señal extra: curva muy invertida es la señal más fuerte de recesión venidera
-    if spread_val is not None and spread_val < -0.5:
-        score[2] += 1  # refuerzo extra recesión temprana
+    # ── Confirmación macro mínima ─────────────────────────────────────────────
+    # ExpT requiere confirmación real: no solo curva, necesita macro favorable
+    macro_confirms_expt = gdp_growing and unemp_falling and not rates_high
+    # ExpL requiere ciclo maduro: crecimiento + presión inflacionista o de tipos
+    macro_confirms_expl = gdp_growing and (cpi_high or rates_high or rates_rising)
+    # Si la curva vota ExpT pero la macro no lo confirma, penalizar
+    if not macro_confirms_expt and score[0] == max(score):
+        score[0] = max(0, score[0] - 2)
+    # Si la curva vota ExpL pero la macro no lo confirma, penalizar
+    if not macro_confirms_expl and score[1] == max(score):
+        score[1] = max(0, score[1] - 2)
 
     phase_idx = score.index(max(score))
     return phase_idx, signals, score
