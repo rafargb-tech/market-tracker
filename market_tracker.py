@@ -1273,7 +1273,10 @@ Longitud: 3-4 párrafos. Tono: analítico, sin alarmismo, con perspectiva de med
             data = json.loads(r.read().decode())
             return data["content"][0]["text"]
     except Exception as e:
-        print(f"   ⚠️  Error generando narrativa: {e}")
+        try:
+            print(f"   ⚠️  Error generando narrativa: {e.code} — {e.read().decode()}")
+        except:
+            print(f"   ⚠️  Error generando narrativa: {e}")
         return None
 
 
@@ -1338,7 +1341,10 @@ def publish_substack(substack_sid, publication_slug, title, body_html, today_str
             return True
 
     except Exception as e:
-        print(f"   ⚠️  Error publicando en Substack: {e}")
+        try:
+            print(f"   ⚠️  Error publicando en Substack: {e.code} — {e.read().decode()[:300]}")
+        except:
+            print(f"   ⚠️  Error publicando en Substack: {e}")
         return False
 
 
