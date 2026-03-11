@@ -1101,20 +1101,47 @@ def main():
     else:
         print("   ⚠️  ANTHROPIC_API_KEY no configurada")
 
-    # 3. Publicar en Substack
-    if substack_sid:
+    # 3. Enviar a Make → Make publica en Substack
+    make_webhook = os.environ.get("MAKE_WEBHOOK_URL", "")
+    if make_webhook:
         title     = f"Market Tracker {today_str} · {PHASE_NAMES[phase_idx]}"
         body_html = build_substack_html(
             narrative, phase_idx, PHASE_NAMES[phase_idx],
             signals, sector_data, score, today_str
         )
-        print("   📤 Publicando en Substack...")
-        publish_substack(substack_sid, "rafauskiv", title, body_html, today_str)
+        print("   📤 Enviando a Make webhook...")
+        send_to_make(make_webhook, title, body_html, today_str, PHASE_NAMES[phase_idx])
     else:
-        print("   ⚠️  SUBSTACK_SID no configurada")
+        print("   ⚠️  MAKE_WEBHOOK_URL no configurada")
 
 
 # ── ADVFN + CLAUDE NARRATIVA + SUBSTACK ───────────────────────────────────────
+
+def send_to_make(webhook_url, title, body_html, today_str, phase_name):
+    """Envía los datos del newsletter a Make via webhook."""
+    import urllib.request, json
+    try:
+        payload = json.dumps({
+            "title":      title,
+            "body_html":  body_html,
+            "subtitle":   f"Fase del ciclo · Sectores · Macro · {today_str}",
+            "date":       today_str,
+            "phase":      phase_name,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            webhook_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            resp = r.read().decode()
+            print(f"   ✅ Make webhook disparado: {resp}")
+            return True
+    except Exception as e:
+        print(f"   ⚠️  Error enviando a Make: {e}")
+        return False
+
 
 def scrape_advfn(date_str):
     """
