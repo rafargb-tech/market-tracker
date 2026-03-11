@@ -869,6 +869,172 @@ def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str):
 
     ws.freeze_panes = "A11"
 
+# ── DISCORD ───────────────────────────────────────────────────────────────────
+
+PHASE_EMOJIS = ["🟢", "🟠", "🔴", "🟣"]
+
+def build_highlights(market_rows, sector_data, signals, phase_idx):
+    """
+    Detecta eventos destacados del día:
+    - Movimientos extremos 1D (>2%) en cualquier activo
+    - Alertas SPI: sector con peso alto bajo EMA200W
+    - Macro fuera de rango: VIX>25, curva cruzando 0
+    """
+    highlights = []
+
+    # 1. Movimientos extremos en mercado (1D > ±2%)
+    THRESHOLD_1D = 0.02
+    for row in market_rows:
+        if row[0] == "HEADER":
+            continue
+        name, ticker, price, _, _, r1d = row[0], row[1], row[2], row[3], row[4], row[5]
+        if r1d is not None and abs(r1d) >= THRESHOLD_1D:
+            emoji = "🟢" if r1d > 0 else "🔴"
+            sign  = "+" if r1d > 0 else ""
+            highlights.append(f"{emoji} **{name}** ({ticker})  {sign}{r1d*100:.1f}% en 1D")
+
+    # 2. Alertas SPI: sector con peso ≥10% bajo EMA200W
+    for sd in sector_data:
+        if sd["alerta"]:
+            highlights.append(
+                f"⚠️ **{sd['name']}** ({sd['ticker']}) bajo EMA200W "
+                f"({sd['pct_ema']*100:.1f}%) — peso actual {sd['rec_weight']*100:.0f}%"
+            )
+
+    # 3. Macro fuera de rango
+    def get_signal(name):
+        return signals.get(name, (None, None, None))
+
+    _, vix_val, _      = get_signal("VIX") if "VIX" in signals else (None, None, None)
+    _, spread_val, _   = get_signal("Curva 10Y-2Y")
+    _, spread_chg, _   = (None, None, None)  # chg está en posición 2
+    sig_curve          = signals.get("Curva 10Y-2Y", (None, None, None))
+    spread_val         = sig_curve[1]
+    spread_chg         = sig_curve[2]
+
+    if spread_val is not None and spread_chg is not None:
+        # Curva cruzando 0 (de negativo a positivo o viceversa)
+        prev_spread = spread_val - spread_chg
+        if (prev_spread < 0 and spread_val >= 0):
+            highlights.append("📐 **Curva 10Y-2Y** cruzó 0 al alza — señal de normalización")
+        elif (prev_spread >= 0 and spread_val < 0):
+            highlights.append("📐 **Curva 10Y-2Y** cruzó 0 a la baja — señal de inversión")
+
+    return highlights
+
+
+def send_discord(webhook_url, output_file, phase_idx, score, signals, sector_data, market_rows, today_str):
+    """Envía resumen + Excel adjunto al canal de Discord via webhook."""
+    import urllib.request, urllib.parse, json, os, mimetypes
+
+    if not webhook_url:
+        print("⚠️  DISCORD_WEBHOOK_URL no configurada, saltando envío.")
+        return
+
+    phase_name  = PHASE_NAMES[phase_idx]
+    phase_emoji = PHASE_EMOJIS[phase_idx]
+
+    # Score compacto
+    score_str = "  ·  ".join(
+        f"**{PHASE_NAMES[i].split()[0]} {PHASE_NAMES[i].split()[1][0]}**: {score[i]}{'◄' if i == phase_idx else ''}"
+        for i in range(4)
+    )
+
+    # Top 3 sectores por peso en fase actual
+    top3 = sorted(sector_data, key=lambda x: x["rec_weight"], reverse=True)[:3]
+    sectors_str = "\n".join(
+        f"  `{sd['ticker']}`  {sd['rec_weight']*100:.0f}%"
+        f"  |  {('+' if sd['r1m'] and sd['r1m']>0 else '')}{sd['r1m']*100:.1f}% 1M"
+        if sd['r1m'] is not None else f"  `{sd['ticker']}`  {sd['rec_weight']*100:.0f}%"
+        for sd in top3
+    )
+
+    # Macro resumen
+    def sig(name):
+        s = signals.get(name, (None, None, None))
+        return f"{s[1]:.2f}" if s[1] is not None else "N/A"
+
+    macro_str = (
+        f"GDP `{sig('GDP QoQ')}%`  ·  CPI `{sig('CPI YoY')}%`  ·  "
+        f"Fed `{sig('Fed Funds')}%`  ·  Curva `{sig('Curva 10Y-2Y')}`  ·  10Y `{sig('10Y Yield')}%`"
+    )
+
+    # Destacados
+    highlights = build_highlights(market_rows, sector_data, signals, phase_idx)
+    if highlights:
+        hl_str = "\n".join(f"  {h}" for h in highlights[:6])  # max 6
+    else:
+        hl_str = "  Sin movimientos destacados hoy."
+
+    # Construir embed
+    embed = {
+        "title": f"📊 Market Tracker  —  {today_str}",
+        "color": int(PHASE_COLORS[phase_idx], 16),
+        "fields": [
+            {
+                "name": f"{phase_emoji} FASE DEL CICLO",
+                "value": f"**{phase_name.upper()}**\n{score_str}",
+                "inline": False
+            },
+            {
+                "name": "⚡ Destacado hoy",
+                "value": hl_str,
+                "inline": False
+            },
+            {
+                "name": f"📈 Sectores recomendados ({phase_name})",
+                "value": sectors_str,
+                "inline": False
+            },
+            {
+                "name": "🌍 Macro",
+                "value": macro_str,
+                "inline": False
+            },
+        ],
+        "footer": {"text": "SPI · Sector Pulse Investing  |  Datos: Yahoo Finance + FRED"},
+    }
+
+    payload = json.dumps({"embeds": [embed]}).encode("utf-8")
+
+    # Enviar mensaje embed primero
+    try:
+        req = urllib.request.Request(
+            webhook_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            print(f"   Discord embed: {r.status}")
+    except Exception as e:
+        print(f"   ⚠️  Error enviando embed Discord: {e}")
+
+    # Enviar Excel como archivo adjunto (multipart)
+    try:
+        boundary = "----MarketTrackerBoundary"
+        with open(output_file, "rb") as f:
+            file_data = f.read()
+
+        filename = os.path.basename(output_file)
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n"
+        ).encode() + file_data + f"\r\n--{boundary}--\r\n".encode()
+
+        req2 = urllib.request.Request(
+            webhook_url,
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req2, timeout=30) as r:
+            print(f"   Discord Excel: {r.status}")
+    except Exception as e:
+        print(f"   ⚠️  Error enviando Excel Discord: {e}")
+
+
 def main():
     today_str = datetime.today().strftime("%d-%b-%y")
     output    = f"market_tracker_{datetime.today().strftime('%Y%m%d')}.xlsx"
@@ -905,6 +1071,11 @@ def main():
     wb.save(output)
     print(f"\n✅ Guardado: {output}")
     print(f"   Pestaña 1 → Markets  |  Pestaña 2 → Macro  |  Pestaña 3 → SPI ({PHASE_NAMES[phase_idx]})")
+
+    print("\n📣 Enviando a Discord...")
+    import os
+    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
+    send_discord(webhook_url, output, phase_idx, score, signals, sector_data, market_rows, today_str)
 
 if __name__ == "__main__":
     main()
