@@ -452,12 +452,9 @@ PHASE_KEYS   = ["exp_early", "exp_late", "rec_early", "rec_late"]
 
 def detect_cycle_phase(macro_results):
     """
-    Determina la fase del ciclo usando los datos FRED ya descargados.
-    Devuelve (phase_index 0-3, dict con señales individuales).
+    Determina la fase del ciclo usando 5 pilares:
+    PIB + Empleo + Inflación + Fed Funds + Curva de tipos (10Y-2Y) + Nivel 10Y
     """
-    signals = {}
-
-    # Extraer valores de las series FRED ya descargadas
     def get_val(region, name):
         for r, indicators in macro_results.items():
             for n, unit, val, chg_last, chg_yoy, note in indicators:
@@ -465,52 +462,95 @@ def detect_cycle_phase(macro_results):
                     return val, chg_last
         return None, None
 
-    gdp_val,   gdp_chg   = get_val("UNITED STATES", "GDP Growth QoQ")
-    unemp_val, unemp_chg = get_val("UNITED STATES", "Unemployment Rate")
-    cpi_val,   cpi_chg   = get_val("UNITED STATES", "CPI YoY")
-    fed_val,   fed_chg   = get_val("UNITED STATES", "Fed Funds Rate")
+    gdp_val,    gdp_chg    = get_val("UNITED STATES", "GDP Growth QoQ")
+    unemp_val,  unemp_chg  = get_val("UNITED STATES", "Unemployment Rate")
+    cpi_val,    cpi_chg    = get_val("UNITED STATES", "CPI YoY")
+    fed_val,    fed_chg    = get_val("UNITED STATES", "Fed Funds Rate")
+    spread_val, spread_chg = get_val("US YIELD CURVE", "10Y - 2Y")
+    y10_val,    y10_chg    = get_val("US YIELD CURVE", "US 10Y Yield")
 
-    # Señales booleanas
-    gdp_growing   = gdp_val  is not None and gdp_val  > 0
-    gdp_strong    = gdp_val  is not None and gdp_val  > 2.5
-    unemp_falling = unemp_chg is not None and unemp_chg < 0
-    unemp_rising  = unemp_chg is not None and unemp_chg > 0
-    unemp_high    = unemp_val is not None and unemp_val > 5.0
-    cpi_high      = cpi_val  is not None and cpi_val  > 3.0
-    cpi_rising    = cpi_chg  is not None and cpi_chg  > 0
-    rates_rising  = fed_chg  is not None and fed_chg  > 0
-    rates_falling = fed_chg  is not None and fed_chg  < 0
-    rates_high    = fed_val  is not None and fed_val  > 4.0
+    # ── Señales booleanas ─────────────────────────────────────────────────────
+    gdp_growing    = gdp_val   is not None and gdp_val   > 0
+    gdp_strong     = gdp_val   is not None and gdp_val   > 2.5
+    unemp_falling  = unemp_chg is not None and unemp_chg < 0
+    unemp_rising   = unemp_chg is not None and unemp_chg > 0
+    unemp_high     = unemp_val is not None and unemp_val > 5.0
+    cpi_high       = cpi_val   is not None and cpi_val   > 3.0
+    cpi_rising     = cpi_chg   is not None and cpi_chg   > 0
+    rates_rising   = fed_chg   is not None and fed_chg   > 0
+    rates_falling  = fed_chg   is not None and fed_chg   < 0
+    rates_high     = fed_val   is not None and fed_val   > 4.0
+
+    # Curva de tipos
+    curve_inverted    = spread_val is not None and spread_val < 0       # invertida → warning recesión
+    curve_normalizing = (spread_val is not None and spread_chg is not None
+                         and spread_val < 0.5 and spread_chg > 0)       # normalizando desde invertida → RecL
+    curve_steep       = spread_val is not None and spread_val > 1.0     # empinada → ExpT
+
+    # Nivel del 10Y
+    y10_rising  = y10_chg is not None and y10_chg > 0
+    y10_falling = y10_chg is not None and y10_chg < 0
+    y10_high    = y10_val is not None and y10_val > 4.0
+
+    # ── Señales para mostrar en pantalla (6 pilares) ──────────────────────────
+    if spread_val is not None:
+        curve_txt = f"{'Invertida ▼' if curve_inverted else ('Normalizando ↗' if curve_normalizing else ('Empinada ▲' if curve_steep else 'Plana →'))}"
+    else:
+        curve_txt = "N/A"
+
+    if y10_val is not None:
+        y10_txt = f"{'▲ Subiendo' if y10_rising else ('▼ Bajando' if y10_falling else '→ Estable')}"
+    else:
+        y10_txt = "N/A"
 
     signals = {
-        "GDP":        ("▲ Creciendo"  if gdp_growing  else "▼ Cayendo",   gdp_val,   gdp_chg),
-        "Desempleo":  ("▼ Bajando"    if unemp_falling else "▲ Subiendo",  unemp_val, unemp_chg),
-        "CPI":        ("▲ Alto"       if cpi_high      else "✓ Moderado",  cpi_val,   cpi_chg),
-        "Fed Funds":  ("▲ Subiendo"   if rates_rising  else ("▼ Bajando" if rates_falling else "→ Estable"), fed_val, fed_chg),
+        "GDP QoQ":      ("▲ Creciendo" if gdp_growing  else "▼ Cayendo",   gdp_val,    gdp_chg),
+        "Desempleo":    ("▼ Bajando"   if unemp_falling else "▲ Subiendo",  unemp_val,  unemp_chg),
+        "CPI YoY":      ("▲ Alto"      if cpi_high      else "✓ Moderado",  cpi_val,    cpi_chg),
+        "Fed Funds":    ("▲ Subiendo"  if rates_rising  else ("▼ Bajando"   if rates_falling else "→ Estable"), fed_val, fed_chg),
+        "Curva 10Y-2Y": (curve_txt,    spread_val,  spread_chg),
+        "10Y Yield":    (y10_txt,      y10_val,     y10_chg),
     }
 
-    # Scoring de fases
+    # ── Scoring ───────────────────────────────────────────────────────────────
     score = [0, 0, 0, 0]  # [ExpT, ExpL, RecT, RecL]
 
+    # Señales fuertes (peso 3)
     if gdp_growing and unemp_falling and not cpi_high and not rates_high:
-        score[0] += 3  # Expansión Temprana clara
+        score[0] += 3
     if gdp_strong and cpi_high and rates_rising:
-        score[1] += 3  # Expansión Tardía clara
+        score[1] += 3
     if not gdp_growing and unemp_rising and cpi_high:
-        score[2] += 3  # Recesión Temprana clara
+        score[2] += 3
     if not gdp_growing and unemp_high and not cpi_rising and (rates_falling or not rates_high):
-        score[3] += 3  # Recesión Tardía clara
+        score[3] += 3
 
-    # Señales adicionales de refuerzo
-    if gdp_growing:   score[0] += 1; score[1] += 1
-    if unemp_falling: score[0] += 1
-    if unemp_rising:  score[2] += 1; score[3] += 1
-    if cpi_high:      score[1] += 1; score[2] += 1
-    if rates_rising:  score[1] += 1
-    if rates_falling: score[3] += 1; score[0] += 1
+    # Señales de refuerzo macro (peso 1)
+    if gdp_growing:    score[0] += 1; score[1] += 1
+    if unemp_falling:  score[0] += 1
+    if unemp_rising:   score[2] += 1; score[3] += 1
+    if cpi_high:       score[1] += 1; score[2] += 1
+    if rates_rising:   score[1] += 1
+    if rates_falling:  score[3] += 1; score[0] += 1
+
+    # Señales de curva (peso 2 — indicador adelantado)
+    if curve_steep:       score[0] += 2   # curva empinada → expansión temprana
+    if curve_inverted:    score[1] += 1; score[2] += 2  # invertida → expL tardía o recesión próxima
+    if curve_normalizing: score[3] += 2   # normalizando → saliendo de recesión
+
+    # Señales del 10Y (peso 1)
+    if y10_rising  and gdp_growing:  score[1] += 1  # tipos largos subiendo con crecimiento → ExpL
+    if y10_rising  and not gdp_growing: score[2] += 1  # tipos largos subiendo sin crecimiento → RecT
+    if y10_falling and not gdp_growing: score[3] += 1  # tipos largos bajando en recesión → RecL
+    if y10_falling and gdp_growing:  score[0] += 1  # tipos largos bajando con crecimiento → ExpT
+
+    # Señal extra: curva muy invertida es la señal más fuerte de recesión venidera
+    if spread_val is not None and spread_val < -0.5:
+        score[2] += 1  # refuerzo extra recesión temprana
 
     phase_idx = score.index(max(score))
-    return phase_idx, signals
+    return phase_idx, signals, score
+
 
 def get_ema200_weekly(ticker, prices_daily):
     """
@@ -535,18 +575,45 @@ def get_ema200_weekly(ticker, prices_daily):
     except Exception:
         return None, None
 
+
+# Sensibilidad de cada sector al entorno de tipos
+# (+) se beneficia de tipos altos/subiendo  (-) se perjudica  (=) neutro
+SECTOR_RATE_SENSITIVITY = {
+    "XLK":  ("-", "Valoraciones presionadas con tipos altos"),
+    "XLY":  ("-", "Consumo apalancado, sensible a tipos"),
+    "XLC":  ("-", "Alto múltiplo, penalizado por descuento"),
+    "XLF":  ("+", "Margen de interés neto mejora con tipos altos"),
+    "XLI":  ("=", "Neutro, depende más del ciclo que de tipos"),
+    "XLB":  ("=", "Materiales: más sensible a demanda global"),
+    "XLP":  ("=", "Defensivo, poco sensible a tipos"),
+    "XLV":  ("=", "Defensivo, relativamente inmune a tipos"),
+    "XLU":  ("-", "Alto dividendo, compite con bonos al subir tipos"),
+    "XLE":  ("+", "Correlación positiva con inflación y tipos altos"),
+    "XLRE": ("-", "Muy sensible: coste financiación y descuento de renta"),
+}
+
 def build_spi_data(prices_daily, macro_results):
     """Construye todos los datos necesarios para la pestaña SPI."""
-    phase_idx, signals = detect_cycle_phase(macro_results)
+    phase_idx, signals, score = detect_cycle_phase(macro_results)
+
+    # Determinar entorno de tipos para la columna de sensibilidad
+    def get_val(region, name):
+        for r, indicators in macro_results.items():
+            for n, unit, val, chg_last, chg_yoy, note in indicators:
+                if n == name:
+                    return val, chg_last
+        return None, None
+
+    y10_val, y10_chg = get_val("US YIELD CURVE", "US 10Y Yield")
+    rates_rising = y10_chg is not None and y10_chg > 0
 
     sector_data = []
     for name, ticker, w_et, w_el, w_rt, w_rl in SPI_SECTORS:
-        weights   = [w_et, w_el, w_rt, w_rl]
+        weights    = [w_et, w_el, w_rt, w_rl]
         rec_weight = weights[phase_idx]
 
         above_ema, pct_ema = get_ema200_weekly(ticker, prices_daily)
 
-        # Precio actual y retornos
         price, r1m, r3m, ytd, r1y = None, None, None, None, None
         if ticker in prices_daily.columns:
             s     = prices_daily[ticker].dropna()
@@ -556,31 +623,234 @@ def build_spi_data(prices_daily, macro_results):
             ytd   = ytd_return(s)
             r1y   = calc_return(s, 252)
 
-        # Señal: SOBREPONDERAR si peso alto Y por debajo de EMA200
-        alerta = False
-        if above_ema is not None and not above_ema and rec_weight >= 0.10:
-            alerta = True
+        alerta = (above_ema is not None and not above_ema and rec_weight >= 0.10)
+
+        # Sensibilidad tipos: favorable/desfavorable según entorno actual
+        rate_sign, rate_note = SECTOR_RATE_SENSITIVITY.get(ticker, ("=", ""))
+        if rates_rising:
+            rate_signal = "favorable" if rate_sign == "+" else ("desfav." if rate_sign == "-" else "neutro")
+            rate_color  = "27AE60"    if rate_sign == "+" else ("E74C3C"   if rate_sign == "-" else SECTION_BG)
+        else:  # tipos bajando
+            rate_signal = "favorable" if rate_sign == "-" else ("desfav." if rate_sign == "+" else "neutro")
+            rate_color  = "27AE60"    if rate_sign == "-" else ("E74C3C"   if rate_sign == "+" else SECTION_BG)
 
         sector_data.append({
-            "name":       name,
-            "ticker":     ticker,
-            "weights":    weights,
-            "rec_weight": rec_weight,
-            "price":      price,
-            "r1m":        r1m,
-            "r3m":        r3m,
-            "ytd":        ytd,
-            "r1y":        r1y,
-            "above_ema":  above_ema,
-            "pct_ema":    pct_ema,
-            "alerta":     alerta,
+            "name":        name,
+            "ticker":      ticker,
+            "weights":     weights,
+            "rec_weight":  rec_weight,
+            "price":       price,
+            "r1m":         r1m,
+            "r3m":         r3m,
+            "ytd":         ytd,
+            "r1y":         r1y,
+            "above_ema":   above_ema,
+            "pct_ema":     pct_ema,
+            "alerta":      alerta,
+            "rate_signal": rate_signal,
+            "rate_color":  rate_color,
+            "rate_note":   rate_note,
         })
 
-    return phase_idx, signals, sector_data
+    return phase_idx, signals, score, sector_data
 
 # ── SHEET 3: SPI ──────────────────────────────────────────────────────────────
 
-def write_spi_sheet(ws, phase_idx, signals, sector_data, today_str):
+def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str):
+    ws.sheet_view.showGridLines = False
+
+    phase_name  = PHASE_NAMES[phase_idx]
+    phase_color = PHASE_COLORS[phase_idx]
+
+    # ── Título ──
+    ws.merge_cells("A1:I1")
+    ws["A1"] = "Sector Pulse Investing (SPI)"
+    ws["A1"].font = fnt(bold=True, size=14); ws["A1"].fill = fill(DARK_BG); ws["A1"].alignment = left(1)
+    ws.merge_cells("J1:M1")
+    ws["J1"] = today_str
+    ws["J1"].font = fnt(bold=True, color=LIGHT_GRAY, size=11); ws["J1"].fill = fill(DARK_BG); ws["J1"].alignment = center()
+    ws.row_dimensions[1].height = 22
+
+    # ── Fase detectada ──
+    ws.merge_cells("A2:M2")
+    ws["A2"] = f"  FASE ACTUAL DEL CICLO:  {phase_name.upper()}"
+    ws["A2"].font = Font(bold=True, color=WHITE, size=12, name="Arial")
+    ws["A2"].fill = fill(phase_color)
+    ws["A2"].alignment = left(1)
+    ws.row_dimensions[2].height = 22
+
+    # ── Score por fase ──
+    ws.merge_cells("A3:M3")
+    score_str = "  Score → " + "  |  ".join(
+        f"{PHASE_NAMES[i]}: {score[i]}{'  ◄ ACTIVA' if i == phase_idx else ''}"
+        for i in range(4)
+    )
+    ws["A3"] = score_str
+    ws["A3"].font = fnt(italic=True, color=LIGHT_GRAY, size=8)
+    ws["A3"].fill = fill(SECTION_BG); ws["A3"].alignment = left(1)
+    ws.row_dimensions[3].height = 13
+
+    # ── Cabecera bloque indicadores ──
+    ws.merge_cells("A4:M4")
+    ws["A4"] = "  5 Pilares del Ciclo  (PIB · Empleo · Inflación · Fed Funds · Curva de Tipos · 10Y Yield)"
+    ws["A4"].font = fnt(bold=True, color=LIGHT_GRAY, size=8)
+    ws["A4"].fill = fill(HEADER_BG); ws["A4"].alignment = left(1)
+    ws.row_dimensions[4].height = 13
+
+    # ── Bloque de 6 indicadores (2 filas x 3 columnas de 4 celdas cada una) ──
+    signal_list = list(signals.items())
+    # Fila 5-7: primeros 3 indicadores | Fila 5-7 cols 7-12: siguientes 3
+    for block_row, block_items in enumerate([(signal_list[:3]), (signal_list[3:])]):
+        base_col = 1 + block_row * 6
+        for i, (ind_name, (status, val, chg)) in enumerate(block_items):
+            col = base_col + i * 2
+
+            c = ws.cell(row=5, column=col, value=ind_name)
+            c.font = fnt(bold=True, color=MID_GRAY, size=8); c.fill = fill(DARK_BG); c.alignment = center()
+            ws.merge_cells(start_row=5, start_column=col, end_row=5, end_column=col+1)
+
+            val_str = f"{val:.2f}" if val is not None else "N/A"
+            chg_str = f" ({'+' if chg and chg > 0 else ''}{chg:.2f})" if chg is not None else ""
+            c2 = ws.cell(row=6, column=col, value=f"{val_str}{chg_str}")
+            c2.font = fnt(bold=True, size=9); c2.fill = fill(DARK_BG); c2.alignment = center()
+            ws.merge_cells(start_row=6, start_column=col, end_row=6, end_column=col+1)
+
+            # Color de señal: verde si positivo para el ciclo, rojo si negativo
+            positive_keywords = {"▲ Creciendo", "▼ Bajando", "✓ Moderado", "▼ Bajando", "Empinada ▲", "Normalizando ↗"}
+            is_green = status in positive_keywords or (ind_name == "10Y Yield" and "▼" in status)
+            is_red   = not is_green and status != "N/A" and "→" not in status
+            tc = "27AE60" if is_green else ("E74C3C" if is_red else MID_GRAY)
+            c3 = ws.cell(row=7, column=col, value=status)
+            c3.font = fnt(bold=True, color=tc, size=8)
+            c3.fill = fill(DARK_BG); c3.alignment = center()
+            ws.merge_cells(start_row=7, start_column=col, end_row=7, end_column=col+1)
+
+    # Columna 13 vacía de separación (si hay 12 cols usadas)
+    for r in range(5, 8):
+        ws.cell(row=r, column=13).fill = fill(DARK_BG)
+
+    ws.row_dimensions[5].height = 13
+    ws.row_dimensions[6].height = 16
+    ws.row_dimensions[7].height = 13
+
+    # ── Separador ──
+    ws.row_dimensions[8].height = 6
+    for c in range(1, 14):
+        ws.cell(row=8, column=c).fill = fill(DARK_BG)
+
+    # ── Sub-cabecera pesos ──
+    ws.merge_cells("D9:G9")
+    c = ws.cell(row=9, column=4, value="Pesos por fase")
+    c.font = fnt(bold=True, color=LIGHT_GRAY, size=8)
+    c.fill = fill(SECTION_BG); c.alignment = center()
+    ws.row_dimensions[9].height = 13
+
+    # ── Cabeceras tabla ──
+    headers = ["Sector", "Ticker", "Precio",
+               "Exp. Temp.", "Exp. Tard.", "Rec. Temp.", "Rec. Tard.",
+               "Peso Actual", "1M", "3M", "YTD", "vs EMA200W", "Tipos"]
+    widths  = [18, 7, 9, 10, 10, 10, 10, 11, 8, 8, 8, 12, 10]
+
+    for ci, (h, w) in enumerate(zip(headers, widths), 1):
+        c = ws.cell(row=10, column=ci, value=h)
+        c.font = fnt(bold=True, color=LIGHT_GRAY, size=8)
+        c.fill = fill(HEADER_BG); c.alignment = center()
+        ws.column_dimensions[get_column_letter(ci)].width = w
+    ws.row_dimensions[10].height = 15
+
+    # ── Filas de sectores ──
+    er = 11
+    for sd in sector_data:
+        alerta    = sd["alerta"]
+        rec_w     = sd["rec_weight"]
+        above_ema = sd["above_ema"]
+        pct_ema   = sd["pct_ema"]
+        row_bg    = "1F3244" if alerta else DARK_BG
+
+        # Col 1: Nombre
+        c = ws.cell(row=er, column=1, value=f"⚠ {sd['name']}" if alerta else sd["name"])
+        c.font = fnt(bold=alerta, color="FFD700" if alerta else LIGHT_GRAY, size=8)
+        c.fill = fill(row_bg); c.alignment = left(1)
+
+        # Col 2: Ticker
+        c = ws.cell(row=er, column=2, value=sd["ticker"])
+        c.font = fnt(color=MID_GRAY, size=8, italic=True)
+        c.fill = fill(row_bg); c.alignment = center()
+
+        # Col 3: Precio
+        c = ws.cell(row=er, column=3, value=fmt_price(sd["price"]))
+        c.font = fnt(size=8); c.fill = fill(row_bg); c.alignment = center()
+
+        # Cols 4-7: Pesos por fase
+        for fi, w in enumerate(sd["weights"]):
+            is_active = (fi == phase_idx)
+            c = ws.cell(row=er, column=fi+4, value=f"{w*100:.0f}%")
+            c.font = fnt(bold=is_active, size=8)
+            c.fill = fill(phase_color if is_active else SECTION_BG); c.alignment = center()
+
+        # Col 8: Peso actual destacado
+        c = ws.cell(row=er, column=8, value=f"{rec_w*100:.0f}%")
+        c.font = Font(bold=True, color=WHITE, size=10, name="Arial")
+        c.fill = fill("1A6B3A" if rec_w >= 0.15 else SECTION_BG); c.alignment = center()
+
+        # Cols 9-11: Retornos
+        for ri, rv in enumerate([sd["r1m"], sd["r3m"], sd["ytd"]]):
+            c = ws.cell(row=er, column=9+ri, value=fmt_pct(rv))
+            c.font = fnt(color=text_ret(rv), size=8, bold=(rv is not None and abs(rv) > 0.05))
+            c.fill = fill(color_ret(rv)); c.alignment = center()
+
+        # Col 12: vs EMA200W
+        if above_ema is None:
+            ema_txt, ema_bg, ema_tc = "N/A", SECTION_BG, MID_GRAY
+        elif above_ema:
+            ema_txt, ema_bg, ema_tc = f"▲ +{pct_ema*100:.1f}%", "1A5C2A", "A9DFBF"
+        else:
+            ema_txt, ema_bg, ema_tc = f"▼ {pct_ema*100:.1f}%", "7B241C", "F1948A"
+        c = ws.cell(row=er, column=12, value=ema_txt)
+        c.font = fnt(bold=True, color=ema_tc, size=8); c.fill = fill(ema_bg); c.alignment = center()
+
+        # Col 13: Sensibilidad tipos
+        c = ws.cell(row=er, column=13, value=sd["rate_signal"])
+        c.font = fnt(bold=True, color=WHITE, size=8)
+        c.fill = fill(sd["rate_color"]); c.alignment = center()
+
+        ws.row_dimensions[er].height = 15
+        er += 1
+
+    # ── Leyenda ──
+    er += 1
+    ws.merge_cells(f"A{er}:M{er}")
+    ws.cell(row=er, column=1,
+        value="  ⚠ Alerta: sector con peso ≥10% por debajo de EMA200W  |  Tipos: favorable/desfav. según entorno actual del 10Y  |  Score = suma de señales por fase").font = fnt(italic=True, color=MID_GRAY, size=7)
+    ws.cell(row=er, column=1).fill = fill(DARK_BG)
+    ws.cell(row=er, column=1).alignment = left(1)
+    ws.row_dimensions[er].height = 13
+
+    # ── Tabla referencia fases ──
+    er += 2
+    ws.merge_cells(f"A{er}:M{er}")
+    c = ws.cell(row=er, column=1, value="  REFERENCIA: Sectores favorecidos y lógica por fase")
+    c.font = fnt(bold=True, color=LIGHT_GRAY, size=9)
+    c.fill = fill(SECTION_BG); c.alignment = left(1)
+    ws.row_dimensions[er].height = 14; er += 1
+
+    ref_data = [
+        ("Expansión Temprana", "27AE60", "XLK (25%), XLY (20%), XLC (15%)  →  Tipos bajos/bajando, consumidor reactiva, tech lidera rebote"),
+        ("Expansión Tardía",   "F39C12", "XLF (20%), XLI (20%), XLB (15%)  →  Tipos altos, curva plana/invertida, inflación en pico"),
+        ("Recesión Temprana",  "E74C3C", "XLV (25%), XLP (20%), XLU (20%)  →  Curva invertida, tipos aún altos, defensivos como refugio"),
+        ("Recesión Tardía",    "8E44AD", "XLE (15%), XLV (15%), XLRE (12%) →  Curva normalizando, tipos bajando, XLRE y XLU se reactivan"),
+    ]
+    for phase, color, desc in ref_data:
+        c1 = ws.cell(row=er, column=1, value=phase)
+        c1.font = fnt(bold=True, size=8); c1.fill = fill(color); c1.alignment = left(1)
+        ws.merge_cells(start_row=er, start_column=1, end_row=er, end_column=3)
+        c2 = ws.cell(row=er, column=4, value=desc)
+        c2.font = fnt(color=LIGHT_GRAY, size=8); c2.fill = fill(DARK_BG); c2.alignment = left(1)
+        ws.merge_cells(start_row=er, start_column=4, end_row=er, end_column=13)
+        ws.row_dimensions[er].height = 14; er += 1
+
+    ws.freeze_panes = "A11"
+
     ws.sheet_view.showGridLines = False
 
     phase_name  = PHASE_NAMES[phase_idx]
@@ -788,7 +1058,7 @@ def main():
     macro_data = build_macro_data()
 
     print("🔄 Calculando fase del ciclo SPI...")
-    phase_idx, signals, sector_data = build_spi_data(prices, macro_data)
+    phase_idx, signals, score, sector_data = build_spi_data(prices, macro_data)
     print(f"   → Fase detectada: {PHASE_NAMES[phase_idx]}")
 
     print("📝 Generando Excel...")
@@ -801,7 +1071,7 @@ def main():
     write_macro_sheet(ws2, macro_data, today_str)
 
     ws3 = wb.create_sheet("SPI")
-    write_spi_sheet(ws3, phase_idx, signals, sector_data, today_str)
+    write_spi_sheet(ws3, phase_idx, signals, score, sector_data, today_str)
 
     wb.save(output)
     print(f"\n✅ Guardado: {output}")
