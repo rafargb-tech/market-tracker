@@ -1075,5 +1075,339 @@ def main():
     webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
     send_discord(webhook_url, output, phase_idx, score, signals, sector_data, market_rows, today_str)
 
-if __name__ == "__main__":
+    print("\n📰 Generando newsletter Substack...")
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    substack_sid  = os.environ.get("SUBSTACK_SID", "")
+    date_str      = datetime.today().strftime("%Y-%m-%d")
+
+    # 1. Scraping ADVFN
+    print("   🌐 Obteniendo briefing ADVFN...")
+    advfn_text = scrape_advfn(date_str)
+    if advfn_text:
+        print(f"   ✅ Briefing obtenido ({len(advfn_text)} chars)")
+    else:
+        print("   ⚠️  Briefing no disponible — newsletter sin narrativa ADVFN")
+
+    # 2. Narrativa con Claude
+    narrative = None
+    if anthropic_key:
+        print("   🤖 Generando narrativa con Claude...")
+        narrative = generate_narrative(
+            anthropic_key, advfn_text,
+            PHASE_NAMES[phase_idx], signals, sector_data, today_str
+        )
+        if narrative:
+            print(f"   ✅ Narrativa generada ({len(narrative)} chars)")
+    else:
+        print("   ⚠️  ANTHROPIC_API_KEY no configurada")
+
+    # 3. Publicar en Substack
+    if substack_sid:
+        title     = f"Market Tracker {today_str} · {PHASE_NAMES[phase_idx]}"
+        body_html = build_substack_html(
+            narrative, phase_idx, PHASE_NAMES[phase_idx],
+            signals, sector_data, score, today_str
+        )
+        print("   📤 Publicando en Substack...")
+        publish_substack(substack_sid, "rafauskiv", title, body_html, today_str)
+    else:
+        print("   ⚠️  SUBSTACK_SID no configurada")
+
+
+# ── ADVFN + CLAUDE NARRATIVA + SUBSTACK ───────────────────────────────────────
+
+def scrape_advfn(date_str):
+    """
+    Intenta obtener el briefing diario de ADVFN.
+    date_str: formato YYYY-MM-DD
+    Devuelve el texto limpio o None si no está disponible.
+    """
+    import urllib.request
+    from html.parser import HTMLParser
+
+    url = f"https://www.advfn.com/world-daily-market-briefing/{date_str}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            html = r.read().decode("utf-8", errors="ignore")
+
+        # Extraer texto del artículo principal
+        class TextExtractor(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.text = []
+                self.capture = False
+                self.skip_tags = {"script", "style", "nav", "header", "footer"}
+                self.current_skip = False
+                self.depth = 0
+
+            def handle_starttag(self, tag, attrs):
+                attrs_dict = dict(attrs)
+                cls = attrs_dict.get("class", "")
+                # Capturar el contenido del artículo principal
+                if tag == "article" or "article" in cls or "content" in cls or "briefing" in cls:
+                    self.capture = True
+                if tag in self.skip_tags:
+                    self.current_skip = True
+
+            def handle_endtag(self, tag):
+                if tag in self.skip_tags:
+                    self.current_skip = False
+
+            def handle_data(self, data):
+                if self.capture and not self.current_skip:
+                    stripped = data.strip()
+                    if stripped:
+                        self.text.append(stripped)
+
+        parser = TextExtractor()
+        parser.feed(html)
+        text = " ".join(parser.text)
+
+        # Verificar que tiene contenido útil (mínimo 200 caracteres)
+        if len(text) < 200:
+            # Fallback: extraer todo el texto visible
+            class SimpleExtractor(HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self.text = []
+                    self.skip = False
+                def handle_starttag(self, tag, attrs):
+                    if tag in {"script", "style", "nav", "header", "footer"}:
+                        self.skip = True
+                def handle_endtag(self, tag):
+                    if tag in {"script", "style", "nav", "header", "footer"}:
+                        self.skip = False
+                def handle_data(self, data):
+                    if not self.skip:
+                        s = data.strip()
+                        if s: self.text.append(s)
+
+            p2 = SimpleExtractor()
+            p2.feed(html)
+            text = " ".join(p2.text)
+
+        # Limpiar y truncar a ~3000 chars para no inflar el prompt
+        text = " ".join(text.split())[:3000]
+        return text if len(text) > 200 else None
+
+    except Exception as e:
+        print(f"   ⚠️  ADVFN no disponible: {e}")
+        return None
+
+
+def generate_narrative(api_key, advfn_text, phase_name, signals, sector_data, today_str):
+    """
+    Usa Claude API para generar la narrativa del newsletter.
+    """
+    import urllib.request, json
+
+    def sig(name):
+        s = signals.get(name, (None, None, None))
+        return f"{s[1]:.2f}" if s[1] is not None else "N/A"
+
+    top3 = sorted(sector_data, key=lambda x: x["rec_weight"], reverse=True)[:3]
+    top3_str = ", ".join(f"{sd['ticker']} ({sd['rec_weight']*100:.0f}%)" for sd in top3)
+
+    macro_context = (
+        f"GDP: {sig('GDP QoQ')}% | CPI: {sig('CPI YoY')}% | "
+        f"Fed Funds: {sig('Fed Funds')}% | Curva 10Y-2Y: {sig('Curva 10Y-2Y')} | "
+        f"10Y Yield: {sig('10Y Yield')}%"
+    )
+
+    advfn_section = f"""
+El briefing de mercados de hoy de ADVFN dice lo siguiente:
+---
+{advfn_text}
+---
+""" if advfn_text else "No hay briefing de mercados disponible hoy."
+
+    system_prompt = """Eres el autor de un newsletter de inversión en español llamado 'Market Tracker'.
+Tu estilo es profesional pero cercano, directo y sin jerga innecesaria.
+Escribes para inversores particulares con conocimientos intermedios-avanzados.
+No usas bullet points ni listas — escribes en prosa fluida.
+Nunca das recomendaciones de compra/venta explícitas — das contexto y perspectiva."""
+
+    user_prompt = f"""Fecha: {today_str}
+
+DATOS DEL TRACKER:
+- Fase del ciclo económico detectada: {phase_name}
+- Sectores con mayor peso en esta fase: {top3_str}
+- Indicadores macro: {macro_context}
+
+{advfn_section}
+
+Escribe la introducción del newsletter diario. Debe:
+1. Abrir con una frase que capture el estado del mercado hoy (usa el briefing ADVFN si está disponible)
+2. Conectar el contexto de mercado con la fase del ciclo detectada ({phase_name})
+3. Mencionar brevemente qué implica esto para los sectores recomendados
+4. Cerrar con una frase que invite al lector a revisar el análisis completo y el Excel adjunto
+
+Longitud: 3-4 párrafos. Tono: analítico, sin alarmismo, con perspectiva de medio plazo."""
+
+    try:
+        payload = json.dumps({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}]
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read().decode())
+            return data["content"][0]["text"]
+    except Exception as e:
+        print(f"   ⚠️  Error generando narrativa: {e}")
+        return None
+
+
+def publish_substack(substack_sid, publication_slug, title, body_html, today_str):
+    """
+    Publica un post en Substack usando la API no oficial.
+    Solo para suscriptores de pago (paid).
+    """
+    import urllib.request, json
+
+    base_url = "https://substack.com/api/v1"
+    headers  = {
+        "Content-Type": "application/json",
+        "Cookie": f"substack.sid={substack_sid}",
+        "User-Agent": "Mozilla/5.0",
+    }
+
+    # 1. Crear draft
+    try:
+        draft_payload = json.dumps({
+            "draft_title":    title,
+            "draft_body":     body_html,
+            "draft_subtitle": f"Fase del ciclo · Sectores · Macro · {today_str}",
+            "audience":       "everyone",   # gratuito para todos
+            "type":           "newsletter",
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            f"{base_url}/drafts",
+            data=draft_payload,
+            headers=headers,
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            draft = json.loads(r.read().decode())
+            draft_id = draft.get("id")
+            print(f"   Draft creado: {draft_id}")
+
+        if not draft_id:
+            print("   ⚠️  No se obtuvo draft_id")
+            return False
+
+        # 2. Publicar el draft
+        pub_payload = json.dumps({
+            "send":           True,
+            "share_automatically": False,
+        }).encode("utf-8")
+
+        req2 = urllib.request.Request(
+            f"{base_url}/drafts/{draft_id}/publish",
+            data=pub_payload,
+            headers=headers,
+            method="POST"
+        )
+        with urllib.request.urlopen(req2, timeout=15) as r2:
+            result = json.loads(r2.read().decode())
+            print(f"   Substack publicado: {result.get('id', 'ok')}")
+            return True
+
+    except Exception as e:
+        print(f"   ⚠️  Error publicando en Substack: {e}")
+        return False
+
+
+def build_substack_html(narrative, phase_idx, phase_name, signals, sector_data, score, today_str):
+    """Construye el HTML del post de Substack."""
+
+    def sig(name):
+        s = signals.get(name, (None, None, None))
+        return f"{s[1]:.2f}" if s[1] is not None else "N/A"
+
+    phase_color_hex = {
+        0: "#27AE60", 1: "#F39C12", 2: "#E74C3C", 3: "#8E44AD"
+    }[phase_idx]
+
+    top_sectors = sorted(sector_data, key=lambda x: x["rec_weight"], reverse=True)[:5]
+    sectors_rows = "".join(
+        f"<tr><td><b>{sd['name']}</b></td><td>{sd['ticker']}</td>"
+        f"<td>{sd['rec_weight']*100:.0f}%</td>"
+        f"<td>{'▲' if sd['r1m'] and sd['r1m']>0 else '▼'} {abs(sd['r1m']*100):.1f}%</td></tr>"
+        if sd['r1m'] is not None else
+        f"<tr><td><b>{sd['name']}</b></td><td>{sd['ticker']}</td><td>{sd['rec_weight']*100:.0f}%</td><td>–</td></tr>"
+        for sd in top_sectors
+    )
+
+    score_str = " · ".join(
+        f"<b>{PHASE_NAMES[i].split()[0]} {PHASE_NAMES[i].split()[1][0]}</b>: {score[i]}{'◄' if i == phase_idx else ''}"
+        for i in range(4)
+    )
+
+    narrative_html = "".join(f"<p>{p.strip()}</p>" for p in narrative.split("\n") if p.strip()) if narrative else ""
+
+    return f"""
+<div style="font-family: Georgia, serif; max-width: 680px; margin: 0 auto; color: #1a1a1a;">
+
+  <div style="background:{phase_color_hex}; color:white; padding:16px 20px; border-radius:8px; margin-bottom:24px;">
+    <div style="font-size:13px; text-transform:uppercase; letter-spacing:1px; opacity:0.85;">Fase del Ciclo · {today_str}</div>
+    <div style="font-size:24px; font-weight:bold; margin-top:4px;">{phase_name.upper()}</div>
+    <div style="font-size:12px; margin-top:8px; opacity:0.8;">{score_str}</div>
+  </div>
+
+  {narrative_html}
+
+  <h3 style="border-bottom:2px solid #eee; padding-bottom:8px;">📈 Sectores recomendados</h3>
+  <table style="width:100%; border-collapse:collapse; font-size:14px;">
+    <thead>
+      <tr style="background:#f5f5f5;">
+        <th style="padding:8px; text-align:left;">Sector</th>
+        <th style="padding:8px;">Ticker</th>
+        <th style="padding:8px;">Peso</th>
+        <th style="padding:8px;">1M</th>
+      </tr>
+    </thead>
+    <tbody>{sectors_rows}</tbody>
+  </table>
+
+  <h3 style="border-bottom:2px solid #eee; padding-bottom:8px; margin-top:24px;">🌍 Indicadores Macro</h3>
+  <table style="width:100%; border-collapse:collapse; font-size:14px;">
+    <tbody>
+      <tr style="background:#f9f9f9;">
+        <td style="padding:8px;"><b>GDP QoQ</b></td><td style="padding:8px;">{sig('GDP QoQ')}%</td>
+        <td style="padding:8px;"><b>CPI YoY</b></td><td style="padding:8px;">{sig('CPI YoY')}%</td>
+      </tr>
+      <tr>
+        <td style="padding:8px;"><b>Fed Funds</b></td><td style="padding:8px;">{sig('Fed Funds')}%</td>
+        <td style="padding:8px;"><b>10Y Yield</b></td><td style="padding:8px;">{sig('10Y Yield')}%</td>
+      </tr>
+      <tr style="background:#f9f9f9;">
+        <td style="padding:8px;"><b>Curva 10Y-2Y</b></td><td style="padding:8px;" colspan="3">{sig('Curva 10Y-2Y')} pts — {signals.get('Curva 10Y-2Y', ('N/A',))[0]}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p style="margin-top:32px; font-size:12px; color:#888; border-top:1px solid #eee; padding-top:16px;">
+    Market Tracker · SPI Sector Pulse Investing · Datos: Yahoo Finance + FRED<br>
+    El Excel completo con todos los activos está disponible en el canal de Discord.
+  </p>
+
+</div>
+"""
+
+if __name__ == '__main__':
     main()
