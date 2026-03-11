@@ -29,7 +29,7 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          SUBSTACK_SID: ${{ secrets.SUBSTACK_SID }}
+          MAKE_WEBHOOK_URL: ${{ secrets.MAKE_WEBHOOK_URL }}
 
       - name: Upload Excel as artifact
         uses: actions/upload-artifact@v4
