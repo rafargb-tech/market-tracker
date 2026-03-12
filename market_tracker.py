@@ -180,23 +180,32 @@ def build_market_rows(prices_df):
     return rows
 
 def get_fred_series(series_id):
-    """Descarga datos de FRED via API REST pública (sin API key ni pandas_datareader)."""
+    """Descarga datos de FRED via API oficial con API key."""
     try:
-        import urllib.request, json
-        start = (datetime.today() - timedelta(days=800)).strftime("%Y-%m-%d")
-        url = (f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
-               f"&vintage_date={datetime.today().strftime('%Y-%m-%d')}")
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            lines = r.read().decode().strip().split("\n")[1:]  # skip header
-        vals = []
-        for line in lines:
-            parts = line.split(",")
-            if len(parts) == 2 and parts[1].strip() not in ("", "."):
-                try:
-                    vals.append(float(parts[1]))
-                except ValueError:
-                    pass
+        import urllib.request, json, os
+        api_key = os.environ.get("FRED_API_KEY", "")
+        if api_key:
+            url = (f"https://api.stlouisfed.org/fred/series/observations"
+                   f"?series_id={series_id}&api_key={api_key}&file_type=json"
+                   f"&sort_order=desc&limit=20")
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read().decode())
+            obs = [o for o in data.get("observations", []) if o["value"] not in (".", "")]
+            if not obs: return None, None, None
+            vals = [float(o["value"]) for o in reversed(obs)]
+        else:
+            url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                lines = r.read().decode().strip().split("\n")[1:]
+            vals = []
+            for line in lines:
+                parts = line.split(",")
+                if len(parts) == 2 and parts[1].strip() not in ("", "."):
+                    try: vals.append(float(parts[1]))
+                    except ValueError: pass
+
         if not vals: return None, None, None
         latest   = vals[-1]
         chg_last = vals[-1] - vals[-2]  if len(vals) > 1  else None
