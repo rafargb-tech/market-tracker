@@ -1090,20 +1090,12 @@ def main():
     substack_sid  = os.environ.get("SUBSTACK_SID", "")
     date_str      = datetime.today().strftime("%Y-%m-%d")
 
-    # 1. Scraping ADVFN
-    print("   🌐 Obteniendo briefing ADVFN...")
-    advfn_text = scrape_advfn(date_str)
-    if advfn_text:
-        print(f"   ✅ Briefing obtenido ({len(advfn_text)} chars)")
-    else:
-        print("   ⚠️  Briefing no disponible — newsletter sin narrativa ADVFN")
-
-    # 2. Narrativa con Claude
+    # 1+2. Narrativa con Claude (busca el briefing del día via web search)
     narrative = None
     if anthropic_key:
         print("   🤖 Generando narrativa con Claude...")
         narrative = generate_narrative(
-            anthropic_key, advfn_text,
+            anthropic_key, None,
             PHASE_NAMES[phase_idx], signals, sector_data, today_str
         )
         if narrative:
@@ -1237,12 +1229,13 @@ def generate_narrative(api_key, advfn_text, phase_name, signals, sector_data, to
         f"10Y Yield: {sig('10Y Yield')}%"
     )
 
-    advfn_section = f"""
-El briefing de mercados de hoy de ADVFN dice lo siguiente:
----
-{advfn_text}
----
-""" if advfn_text else "No hay briefing de mercados disponible hoy."
+    advfn_section = (
+        f"Busca en internet el resumen de mercados del día {today_str} usando estas fuentes en orden de preferencia:\n"
+        f"1. ADVFN: https://www.advfn.com/world-daily-market-briefing/{today_str}\n"
+        f"2. Edward Jones Daily Market Recap: https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/daily-market-recap\n"
+        f"3. Reuters, Bloomberg o MarketWatch si las anteriores no están disponibles.\n"
+        f"Usa el contenido encontrado para contextualizar la narrativa con los eventos reales del día."
+    )
 
     system_prompt = """Eres el autor de un newsletter de inversión en español llamado 'Market Tracker'.
 Tu estilo es profesional pero cercano, directo y sin jerga innecesaria.
@@ -1272,6 +1265,7 @@ Longitud: 3-4 párrafos. Tono: analítico, sin alarmismo, con perspectiva de med
             "model": "claude-sonnet-4-6",
             "max_tokens": 1000,
             "system": system_prompt,
+            "tools": [{"type": "web_search_20250305", "name": "web_search"}],
             "messages": [{"role": "user", "content": user_prompt}]
         }).encode("utf-8")
 
@@ -1285,9 +1279,13 @@ Longitud: 3-4 párrafos. Tono: analítico, sin alarmismo, con perspectiva de med
             },
             method="POST"
         )
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=60) as r:
             data = json.loads(r.read().decode())
-            return data["content"][0]["text"]
+        # Extraer texto ignorando bloques de tool_use
+        for block in data.get("content", []):
+            if block.get("type") == "text" and block.get("text", "").strip():
+                return block["text"]
+        return None
     except Exception as e:
         try:
             print(f"   ⚠️  Error generando narrativa: {e.code} — {e.read().decode()}")
