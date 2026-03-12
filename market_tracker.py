@@ -1281,11 +1281,12 @@ Longitud: 3-4 párrafos. Tono: analítico, sin alarmismo, con perspectiva de med
         )
         with urllib.request.urlopen(req, timeout=60) as r:
             data = json.loads(r.read().decode())
-        # Extraer texto ignorando bloques de tool_use
-        for block in data.get("content", []):
-            if block.get("type") == "text" and block.get("text", "").strip():
-                return block["text"]
-        return None
+        # Extraer y concatenar todos los bloques de texto (ignorar tool_use)
+        text_blocks = [
+            block["text"] for block in data.get("content", [])
+            if block.get("type") == "text" and block.get("text", "").strip()
+        ]
+        return "\n\n".join(text_blocks) if text_blocks else None
     except Exception as e:
         try:
             print(f"   ⚠️  Error generando narrativa: {e.code} — {e.read().decode()}")
