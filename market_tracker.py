@@ -1155,12 +1155,10 @@ def send_to_make(webhook_url, title, body_html, today_str, phase_name):
 
 def scrape_advfn(date_str):
     """
-    Intenta obtener el briefing diario de ADVFN.
-    date_str: formato YYYY-MM-DD
+    Obtiene el briefing diario de ADVFN.
     Devuelve el texto limpio o None si no está disponible.
     """
-    import urllib.request
-    from html.parser import HTMLParser
+    import urllib.request, re
 
     url = f"https://www.advfn.com/world-daily-market-briefing/{date_str}"
     try:
@@ -1168,70 +1166,50 @@ def scrape_advfn(date_str):
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
-            "Accept-Encoding": "gzip, deflate",
             "Connection": "keep-alive",
         })
         with urllib.request.urlopen(req, timeout=15) as r:
             html = r.read().decode("utf-8", errors="ignore")
 
-        # Extraer texto del artículo principal
-        class TextExtractor(HTMLParser):
-            def __init__(self):
-                super().__init__()
-                self.text = []
-                self.capture = False
-                self.skip_tags = {"script", "style", "nav", "header", "footer"}
-                self.current_skip = False
-                self.depth = 0
+        # Eliminar scripts, styles, nav, header, footer
+        html = re.sub(r'<(script|style|nav|header|footer|aside)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL|re.IGNORECASE)
 
-            def handle_starttag(self, tag, attrs):
-                attrs_dict = dict(attrs)
-                cls = attrs_dict.get("class", "")
-                # Capturar el contenido del artículo principal
-                if tag == "article" or "article" in cls or "content" in cls or "briefing" in cls:
-                    self.capture = True
-                if tag in self.skip_tags:
-                    self.current_skip = True
+        # Buscar el contenido principal del artículo — ADVFN usa div con clase "article-body" o similar
+        # Intentamos varias estrategias en orden
+        text = ""
 
-            def handle_endtag(self, tag):
-                if tag in self.skip_tags:
-                    self.current_skip = False
+        # Estrategia 1: buscar párrafos dentro de article o div.article-body
+        patterns = [
+            r'<article[^>]*>(.*?)</article>',
+            r'<div[^>]*class=["\'][^"\']*article[^"\']*["\'][^>]*>(.*?)</div>',
+            r'<div[^>]*class=["\'][^"\']*content[^"\']*["\'][^>]*>(.*?)</div>',
+            r'<div[^>]*id=["\'][^"\']*content[^"\']*["\'][^>]*>(.*?)</div>',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, html, re.DOTALL|re.IGNORECASE)
+            if match:
+                block = match.group(1)
+                # Extraer texto de párrafos
+                paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', block, re.DOTALL|re.IGNORECASE)
+                if paragraphs:
+                    text = " ".join(re.sub(r'<[^>]+>', ' ', p).strip() for p in paragraphs)
+                    text = re.sub(r'\s+', ' ', text).strip()
+                    if len(text) > 300:
+                        break
 
-            def handle_data(self, data):
-                if self.capture and not self.current_skip:
-                    stripped = data.strip()
-                    if stripped:
-                        self.text.append(stripped)
+        # Estrategia 2: extraer todos los <p> del HTML si no encontramos artículo
+        if len(text) < 300:
+            paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL|re.IGNORECASE)
+            # Filtrar párrafos cortos (menú, pie de página, etc.)
+            good_paragraphs = []
+            for p in paragraphs:
+                clean = re.sub(r'<[^>]+>', ' ', p).strip()
+                clean = re.sub(r'\s+', ' ', clean)
+                if len(clean) > 80:  # solo párrafos sustanciales
+                    good_paragraphs.append(clean)
+            text = " ".join(good_paragraphs)
 
-        parser = TextExtractor()
-        parser.feed(html)
-        text = " ".join(parser.text)
-
-        # Verificar que tiene contenido útil (mínimo 200 caracteres)
-        if len(text) < 200:
-            # Fallback: extraer todo el texto visible
-            class SimpleExtractor(HTMLParser):
-                def __init__(self):
-                    super().__init__()
-                    self.text = []
-                    self.skip = False
-                def handle_starttag(self, tag, attrs):
-                    if tag in {"script", "style", "nav", "header", "footer"}:
-                        self.skip = True
-                def handle_endtag(self, tag):
-                    if tag in {"script", "style", "nav", "header", "footer"}:
-                        self.skip = False
-                def handle_data(self, data):
-                    if not self.skip:
-                        s = data.strip()
-                        if s: self.text.append(s)
-
-            p2 = SimpleExtractor()
-            p2.feed(html)
-            text = " ".join(p2.text)
-
-        # Limpiar y truncar a ~3000 chars para no inflar el prompt
-        text = " ".join(text.split())[:3000]
+        text = re.sub(r'\s+', ' ', text).strip()[:3000]
         return text if len(text) > 200 else None
 
     except Exception as e:
