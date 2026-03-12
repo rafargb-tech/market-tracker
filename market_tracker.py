@@ -1210,6 +1210,7 @@ def scrape_advfn(date_str):
             text = " ".join(good_paragraphs)
 
         text = re.sub(r'\s+', ' ', text).strip()[:3000]
+        print(f"   🔍 ADVFN preview: {text[:300]!r}")
         return text if len(text) > 200 else None
 
     except Exception as e:
