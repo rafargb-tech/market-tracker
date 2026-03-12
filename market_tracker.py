@@ -574,14 +574,48 @@ def detect_cycle_phase(macro_results):
     if y10_falling and not gdp_growing: score[3] += 1  # tipos largos bajando en recesión → RecL
     if y10_falling and gdp_growing:     score[0] += 1  # tipos largos bajando con crecimiento → ExpT
 
+    # ── VIX: sentimiento de mercado ──────────────────────────────────────────
+    vix_val, vix_chg, _ = get_val("UNITED STATES", "VIX") if False else (None, None, None)
+    # Obtener VIX directamente de signals macro si está disponible
+    for region, indicators in macro_results.items():
+        for n, unit, val, chg_last, chg_yoy, note in indicators:
+            if n == "VIX":
+                vix_val = val
+                vix_chg = chg_last
+
+    vix_fear        = vix_val is not None and vix_val > 25   # miedo moderado
+    vix_panic       = vix_val is not None and vix_val > 35   # pánico
+    vix_rising      = vix_chg is not None and vix_chg > 2    # VIX subiendo rápido
+
+    # Penalizar expansión si hay miedo en mercado
+    if vix_fear:
+        score[0] = max(0, score[0] - 1)   # ExpT penalizada con miedo moderado
+        score[1] = max(0, score[1] - 1)   # ExpL también
+    if vix_panic:
+        score[0] = max(0, score[0] - 2)   # ExpT muy penalizada en pánico
+        score[2] += 1                      # RecT más probable en pánico
+    if vix_rising and vix_fear:
+        score[0] = max(0, score[0] - 1)   # penalización adicional si VIX acelerando
+
+    # ── Inercia: exigir margen mínimo para cambiar de fase ───────────────────
+    # ExpT es la fase más "optimista" — exigir margen de 2 puntos sobre el segundo
+    sorted_scores = sorted(enumerate(score), key=lambda x: x[1], reverse=True)
+    top_phase, top_score = sorted_scores[0]
+    second_score = sorted_scores[1][1]
+
+    # Si ExpT gana pero por menos de 2 puntos y desempleo no está cayendo → no es ExpT clara
+    if top_phase == 0 and (top_score - second_score) < 2 and not unemp_falling:
+        # Desempate: ceder a la segunda fase
+        score[0] = max(0, score[0] - 1)
+
     # ── Confirmación macro mínima ─────────────────────────────────────────────
-    # ExpT requiere confirmación real: no solo curva, necesita macro favorable
-    macro_confirms_expt = gdp_growing and unemp_falling and not rates_high
+    # ExpT requiere confirmación real: crecimiento + desempleo no subiendo + tipos no altos
+    macro_confirms_expt = gdp_growing and not unemp_rising and not rates_high
     # ExpL requiere ciclo maduro: crecimiento + presión inflacionista o de tipos
     macro_confirms_expl = gdp_growing and (cpi_high or rates_high or rates_rising)
-    # Si la curva vota ExpT pero la macro no lo confirma, penalizar
+    # Si la curva vota ExpT pero la macro no lo confirma, penalizar más fuerte
     if not macro_confirms_expt and score[0] == max(score):
-        score[0] = max(0, score[0] - 2)
+        score[0] = max(0, score[0] - 3)
     # Si la curva vota ExpL pero la macro no lo confirma, penalizar
     if not macro_confirms_expl and score[1] == max(score):
         score[1] = max(0, score[1] - 2)
