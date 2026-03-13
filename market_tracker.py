@@ -470,7 +470,7 @@ PHASE_KEYS   = ["exp_early", "exp_late", "rec_early", "rec_late"]
 #   gdp_falling + unemp_rising  + cpi_high + rates_high          → Recesión Temprana
 #   gdp_low     + unemp_high    + cpi_low  + rates_falling       → Recesión Tardía
 
-def detect_cycle_phase(macro_results):
+def detect_cycle_phase(macro_results, prices_daily=None):
     """
     Determina la fase del ciclo usando 5 pilares:
     PIB + Empleo + Inflación + Fed Funds + Curva de tipos (10Y-2Y) + Nivel 10Y
@@ -574,28 +574,42 @@ def detect_cycle_phase(macro_results):
     if y10_falling and not gdp_growing: score[3] += 1  # tipos largos bajando en recesión → RecL
     if y10_falling and gdp_growing:     score[0] += 1  # tipos largos bajando con crecimiento → ExpT
 
-    # ── VIX: sentimiento de mercado ──────────────────────────────────────────
-    vix_val, vix_chg, _ = get_val("UNITED STATES", "VIX") if False else (None, None, None)
-    # Obtener VIX directamente de signals macro si está disponible
-    for region, indicators in macro_results.items():
-        for n, unit, val, chg_last, chg_yoy, note in indicators:
-            if n == "VIX":
-                vix_val = val
-                vix_chg = chg_last
+    # ── VIX: sentimiento de mercado (MA25 vs MA200) ─────────────────────────
+    vix_ma25 = vix_ma200 = vix_current = None
+    try:
+        if prices_daily is not None and "^VIX" in prices_daily.columns:
+            vix_series = prices_daily["^VIX"].dropna()
+            if len(vix_series) >= 200:
+                vix_ma25  = float(vix_series.rolling(25).mean().iloc[-1])
+                vix_ma200 = float(vix_series.rolling(200).mean().iloc[-1])
+                vix_current = float(vix_series.iloc[-1])
+    except Exception:
+        pass
 
-    vix_fear        = vix_val is not None and vix_val > 25   # miedo moderado
-    vix_panic       = vix_val is not None and vix_val > 35   # pánico
-    vix_rising      = vix_chg is not None and vix_chg > 2    # VIX subiendo rápido
+    # Señales basadas en medias — estables, no sensibles al ruido intradía
+    vix_fear        = vix_ma25  is not None and vix_ma25  > 25    # MA25 en zona de miedo
+    vix_panic       = vix_ma25  is not None and vix_ma25  > 35    # MA25 en zona de pánico
+    vix_deteriorating = (vix_ma25 is not None and vix_ma200 is not None
+                         and vix_ma25 > vix_ma200)                 # tendencia alcista en VIX
+    vix_improving   = (vix_ma25 is not None and vix_ma200 is not None
+                       and vix_ma25 < vix_ma200)                   # tendencia bajista en VIX
 
-    # Penalizar expansión si hay miedo en mercado
+    # Añadir señales VIX al diccionario signals para mostrarlo en SPI
+    if vix_ma25 is not None and vix_ma200 is not None:
+        vix_trend_txt = "↑ Deteriorando" if vix_deteriorating else "↓ Mejorando"
+        signals["VIX MA25/200"] = (vix_trend_txt, vix_ma25, vix_ma25 - vix_ma200)
+
+    # Penalizar expansión si tendencia VIX es alcista (sentimiento deteriorándose)
+    if vix_deteriorating:
+        score[0] = max(0, score[0] - 1)   # ExpT penalizada
     if vix_fear:
-        score[0] = max(0, score[0] - 1)   # ExpT penalizada con miedo moderado
+        score[0] = max(0, score[0] - 1)   # ExpT penalizada adicional si MA25 > 25
         score[1] = max(0, score[1] - 1)   # ExpL también
     if vix_panic:
-        score[0] = max(0, score[0] - 2)   # ExpT muy penalizada en pánico
+        score[0] = max(0, score[0] - 1)   # ExpT muy penalizada en pánico
         score[2] += 1                      # RecT más probable en pánico
-    if vix_rising and vix_fear:
-        score[0] = max(0, score[0] - 1)   # penalización adicional si VIX acelerando
+    if vix_improving:
+        score[0] += 1                      # ExpT favorecida si VIX mejorando
 
     # ── Inercia: exigir margen mínimo para cambiar de fase ───────────────────
     # ExpT es la fase más "optimista" — exigir margen de 2 puntos sobre el segundo
@@ -666,7 +680,7 @@ SECTOR_RATE_SENSITIVITY = {
 
 def build_spi_data(prices_daily, macro_results):
     """Construye todos los datos necesarios para la pestaña SPI."""
-    phase_idx, signals, score = detect_cycle_phase(macro_results)
+    phase_idx, signals, score = detect_cycle_phase(macro_results, prices_daily)
 
     # Determinar entorno de tipos para la columna de sensibilidad
     def get_val(region, name):
