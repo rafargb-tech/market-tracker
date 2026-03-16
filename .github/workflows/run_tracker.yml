@@ -1,9 +1,7 @@
 name: Market Tracker Daily
 
 on:
-  schedule:
-    - cron: '30 13 * * 1-5'  # 9:30 EDT (UTC-4, mar-nov) — cambiar a 30 14 en nov cuando vuelve EST
-  workflow_dispatch:        # Permite ejecutarlo manualmente desde GitHub
+  workflow_dispatch:        # Disparado por cron-job.org a las 9:30 EDT
 
 jobs:
   run-tracker:
