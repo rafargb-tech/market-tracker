@@ -577,11 +577,14 @@ def detect_cycle_phase(macro_results, prices_daily=None):
     # ── VIX: sentimiento de mercado (MA25 vs MA200) ─────────────────────────
     vix_ma25 = vix_ma200 = vix_current = None
     try:
-        if prices_daily is not None and "^VIX" in prices_daily.columns:
-            vix_series = prices_daily["^VIX"].dropna()
+        vix_df = yf.download("^VIX", period="2y", auto_adjust=True, progress=False)
+        if not vix_df.empty:
+            vix_series = vix_df["Close"].dropna()
+            if hasattr(vix_series, "columns"):
+                vix_series = vix_series.iloc[:, 0]
             if len(vix_series) >= 200:
-                vix_ma25  = float(vix_series.rolling(25).mean().iloc[-1])
-                vix_ma200 = float(vix_series.rolling(200).mean().iloc[-1])
+                vix_ma25    = float(vix_series.rolling(25).mean().iloc[-1])
+                vix_ma200   = float(vix_series.rolling(200).mean().iloc[-1])
                 vix_current = float(vix_series.iloc[-1])
     except Exception:
         pass
