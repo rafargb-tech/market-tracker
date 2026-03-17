@@ -637,7 +637,17 @@ def detect_cycle_phase(macro_results, prices_daily=None):
     if not macro_confirms_expl and score[1] == max(score):
         score[1] = max(0, score[1] - 2)
 
-    phase_idx = score.index(max(score))
+    # ── Desempate: en empate, preferir fase más conservadora ────────────────
+    max_score = max(score)
+    top_phases = [i for i, s in enumerate(score) if s == max_score]
+    if len(top_phases) == 1:
+        phase_idx = top_phases[0]
+    else:
+        # En empate: preferir la fase más avanzada del ciclo (más conservadora)
+        # Orden de preferencia en empate: ExpL > RecT > RecL > ExpT
+        preference = [1, 2, 3, 0]  # ExpL primero, ExpT último
+        phase_idx = next(p for p in preference if p in top_phases)
+
     return phase_idx, signals, score
 
 
@@ -1314,7 +1324,7 @@ Longitud: 3-4 párrafos. Tono: analítico, sin alarmismo, con perspectiva de med
     try:
         payload = json.dumps({
             "model": "claude-sonnet-4-6",
-            "max_tokens": 1000,
+            "max_tokens": 2000,
             "system": system_prompt,
             "tools": [{"type": "web_search_20250305", "name": "web_search"}],
             "messages": [{"role": "user", "content": user_prompt}]
@@ -1333,11 +1343,19 @@ Longitud: 3-4 párrafos. Tono: analítico, sin alarmismo, con perspectiva de med
         with urllib.request.urlopen(req, timeout=60) as r:
             data = json.loads(r.read().decode())
         # Extraer y concatenar todos los bloques de texto (ignorar tool_use)
+        import re
         text_blocks = [
             block["text"] for block in data.get("content", [])
             if block.get("type") == "text" and block.get("text", "").strip()
         ]
-        return "\n\n".join(text_blocks) if text_blocks else None
+        if not text_blocks:
+            return None
+        text = "\n\n".join(text_blocks)
+        # Limpiar marcadores de citas web [1], [2] etc. y saltos de línea excesivos
+        text = re.sub(r"\[\d+\]", "", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        text = re.sub(r" {2,}", " ", text)
+        return text.strip()
     except Exception as e:
         try:
             print(f"   ⚠️  Error generando narrativa: {e.code} — {e.read().decode()}")
