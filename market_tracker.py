@@ -334,11 +334,11 @@ def add_banner_to_sheet(ws, banner_path, last_row):
         return
     try:
         img = XLImage(banner_path)
-        # Escalar a ancho razonable manteniendo proporción
-        img.width  = 800
-        img.height = int(156 * 800 / 1919)
-        # Colocar 2 filas después del último contenido
-        cell = f"A{last_row + 2}"
+        # Ancho total de tabla (~15 columnas × 60px ≈ 900px)
+        img.width  = 900
+        img.height = int(156 * 900 / 1919)
+        # Colocar inmediatamente después del último contenido sin fila de separación
+        cell = f"A{last_row + 1}"
         ws.add_image(img, cell)
     except Exception as e:
         print(f"   ⚠️  Banner no añadido: {e}")
@@ -808,15 +808,10 @@ def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str):
     ws.row_dimensions[3].height = 13
 
     # ── Cabecera bloque indicadores ──
-    ws.merge_cells("A4:M4")
-    ws["A4"] = "  5 Pilares del Ciclo  (PIB · Empleo · Inflación · Fed Funds · Curva de Tipos · 10Y Yield)"
+    ws.merge_cells("A4:O4")
+    ws["A4"] = "  6 Pilares del Ciclo  (PIB · Empleo · Inflación · Fed Funds · Curva de Tipos · 10Y Yield · VIX MA25/200)"
     ws["A4"].font = fnt(bold=True, color=LIGHT_GRAY, size=8)
     ws["A4"].fill = fill(HEADER_BG); ws["A4"].alignment = left(1)
-    # VIX MA25/200 en columnas N-O (cols 14-15)
-    ws.merge_cells("N4:O4")
-    ws["N4"] = "VIX MA25/200"
-    ws["N4"].font = fnt(bold=True, color=LIGHT_GRAY, size=8)
-    ws["N4"].fill = fill(HEADER_BG); ws["N4"].alignment = center()
     ws.row_dimensions[4].height = 13
 
     # ── Bloque de 6 indicadores (2 filas x 3 columnas de 4 celdas cada una) ──
@@ -902,6 +897,9 @@ def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str):
         c.font = fnt(bold=True, color=LIGHT_GRAY, size=8)
         c.fill = fill(HEADER_BG); c.alignment = center()
         ws.column_dimensions[get_column_letter(ci)].width = w
+    # Columnas N y O para VIX MA
+    ws.column_dimensions["N"].width = 8
+    ws.column_dimensions["O"].width = 8
     ws.row_dimensions[10].height = 15
 
     # ── Filas de sectores ──
