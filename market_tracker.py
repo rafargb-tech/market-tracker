@@ -5,6 +5,7 @@ Requiere: pip install yfinance openpyxl
 
 import yfinance as yf
 import openpyxl
+from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from datetime import datetime, timedelta
@@ -324,6 +325,23 @@ def fmt_chg(val, unit):
 MKT_HEADERS = ["Name", "Ticker", "Price", "vs 52W Low", "vs 52W High",
                "1D", "1W", "1M", "YTD", "1Y", "5Y"]
 MKT_WIDTHS  = [28, 9, 11, 11, 11, 8, 8, 8, 8, 8, 8]
+
+
+def add_banner_to_sheet(ws, banner_path, last_row):
+    """Añade el banner de Quantfury al pie de la hoja."""
+    import os
+    if not os.path.exists(banner_path):
+        return
+    try:
+        img = XLImage(banner_path)
+        # Escalar a ancho razonable manteniendo proporción
+        img.width  = 800
+        img.height = int(156 * 800 / 1919)
+        # Colocar 2 filas después del último contenido
+        cell = f"A{last_row + 2}"
+        ws.add_image(img, cell)
+    except Exception as e:
+        print(f"   ⚠️  Banner no añadido: {e}")
 
 def write_market_sheet(ws, rows, today_str):
     ws.sheet_view.showGridLines = False
@@ -1130,12 +1148,15 @@ def main():
     ws1 = wb.active
     ws1.title = "Markets"
     write_market_sheet(ws1, market_rows, today_str)
+    add_banner_to_sheet(ws1, "banner.png", ws1.max_row)
 
     ws2 = wb.create_sheet("Macro")
     write_macro_sheet(ws2, macro_data, today_str)
+    add_banner_to_sheet(ws2, "banner.png", ws2.max_row)
 
     ws3 = wb.create_sheet("SPI")
     write_spi_sheet(ws3, phase_idx, signals, score, sector_data, today_str)
+    add_banner_to_sheet(ws3, "banner.png", ws3.max_row)
 
     wb.save(output)
     print(f"\n✅ Guardado: {output}")
