@@ -812,10 +812,16 @@ def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str):
     ws["A4"] = "  5 Pilares del Ciclo  (PIB · Empleo · Inflación · Fed Funds · Curva de Tipos · 10Y Yield)"
     ws["A4"].font = fnt(bold=True, color=LIGHT_GRAY, size=8)
     ws["A4"].fill = fill(HEADER_BG); ws["A4"].alignment = left(1)
+    # VIX MA25/200 en columnas N-O (cols 14-15)
+    ws.merge_cells("N4:O4")
+    ws["N4"] = "VIX MA25/200"
+    ws["N4"].font = fnt(bold=True, color=LIGHT_GRAY, size=8)
+    ws["N4"].fill = fill(HEADER_BG); ws["N4"].alignment = center()
     ws.row_dimensions[4].height = 13
 
     # ── Bloque de 6 indicadores (2 filas x 3 columnas de 4 celdas cada una) ──
-    signal_list = list(signals.items())
+    # Excluir VIX MA25/200 del bloque visual — se muestra en cabecera de pilares
+    signal_list = [(k, v) for k, v in signals.items() if k != "VIX MA25/200"][:6]
     # Fila 5-7: primeros 3 indicadores | Fila 5-7 cols 7-12: siguientes 3
     for block_row, block_items in enumerate([(signal_list[:3]), (signal_list[3:])]):
         base_col = 1 + block_row * 6
@@ -842,9 +848,32 @@ def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str):
             c3.fill = fill(DARK_BG); c3.alignment = center()
             ws.merge_cells(start_row=7, start_column=col, end_row=7, end_column=col+1)
 
-    # Columna 13 vacía de separación (si hay 12 cols usadas)
+    # Columna 13 vacía de separación
     for r in range(5, 8):
         ws.cell(row=r, column=13).fill = fill(DARK_BG)
+
+    # ── VIX MA25/200 en columnas N-O (14-15) ──
+    vix_signal = signals.get("VIX MA25/200")
+    if vix_signal:
+        vix_status, vix_val, vix_diff = vix_signal
+        # Fila 5: label
+        ws.merge_cells("N5:O5")
+        c = ws["N5"]; c.value = "VIX MA25/200"
+        c.font = fnt(bold=True, color=MID_GRAY, size=8); c.fill = fill(DARK_BG); c.alignment = center()
+        # Fila 6: valor
+        ws.merge_cells("N6:O6")
+        c2 = ws["N6"]; c2.value = f"{vix_val:.2f} ({('+' if vix_diff > 0 else '')}{vix_diff:.2f})"
+        c2.font = fnt(bold=True, size=9); c2.fill = fill(DARK_BG); c2.alignment = center()
+        # Fila 7: estado
+        ws.merge_cells("N7:O7")
+        is_red = "Deteriorando" in vix_status
+        tc = "E74C3C" if is_red else "27AE60"
+        c3 = ws["N7"]; c3.value = vix_status
+        c3.font = fnt(bold=True, color=tc, size=8); c3.fill = fill(DARK_BG); c3.alignment = center()
+    else:
+        for r in range(5, 8):
+            ws.merge_cells(start_row=r, start_column=14, end_row=r, end_column=15)
+            ws.cell(row=r, column=14).fill = fill(DARK_BG)
 
     ws.row_dimensions[5].height = 13
     ws.row_dimensions[6].height = 16
