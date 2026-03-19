@@ -33,8 +33,8 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add fred_cache.json || true
-          git diff --cached --quiet || git commit -m "Update FRED cache"
+          git add fred_cache.json spi_history.json || true
+          git diff --cached --quiet || git commit -m "Update FRED cache + SPI history"
           git push || true
 
       - name: Upload Excel as artifact
