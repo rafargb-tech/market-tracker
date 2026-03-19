@@ -124,6 +124,8 @@ MACRO_DATA = {
         ("10Y-2Y Spread",     "T10Y2Y",                "pts", "FRED", "Negative = inverted curve"),
         ("VIX",               "^VIX",                  "pts", "YF",   ">30 = high fear"),
         ("DXY (USD Index)",   "DX-Y.NYB",              "pts", "YF",   "Trade-weighted USD"),
+        ("OECD CLI",          "USALOLITONOSTSAM",      "pts", "FRED", "CLI >100 expansión, <100 contracción"),
+        ("CFNAI",             "CFNAI",                 "pts", "FRED", "Chicago Fed. <-0.7 = recesión"),
     ],
     "EURO ZONE": [
         ("ECB Deposit Rate",  "ECBDFR",                "%",   "FRED", "ECB deposit facility rate"),
@@ -180,11 +182,39 @@ def build_market_rows(prices_df):
                          ytd_return(s), calc_return(s,252), calc_return(s,252*5)))
     return rows
 
-def get_fred_series(series_id):
-    """Descarga datos de FRED via API oficial con API key."""
+# ── Caché FRED — persiste últimos valores buenos entre ejecuciones ────────────
+FRED_CACHE_FILE = "fred_cache.json"
+
+def load_fred_cache():
+    import json, os
+    if os.path.exists(FRED_CACHE_FILE):
+        try:
+            with open(FRED_CACHE_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_fred_cache(cache):
+    import json
     try:
-        import urllib.request, json, os
-        api_key = os.environ.get("FRED_API_KEY", "")
+        with open(FRED_CACHE_FILE, "w") as f:
+            json.dump(cache, f)
+    except Exception:
+        pass
+
+_fred_cache = None
+
+def get_fred_series(series_id):
+    """Descarga datos de FRED via API oficial con API key. Si falla, usa caché."""
+    global _fred_cache
+    import urllib.request, json, os
+
+    if _fred_cache is None:
+        _fred_cache = load_fred_cache()
+
+    api_key = os.environ.get("FRED_API_KEY", "")
+    try:
         if api_key:
             url = (f"https://api.stlouisfed.org/fred/series/observations"
                    f"?series_id={series_id}&api_key={api_key}&file_type=json"
@@ -193,7 +223,8 @@ def get_fred_series(series_id):
             with urllib.request.urlopen(req, timeout=15) as r:
                 data = json.loads(r.read().decode())
             obs = [o for o in data.get("observations", []) if o["value"] not in (".", "")]
-            if not obs: return None, None, None
+            if not obs:
+                raise ValueError("No observations")
             vals = [float(o["value"]) for o in reversed(obs)]
         else:
             url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
@@ -206,14 +237,24 @@ def get_fred_series(series_id):
                 if len(parts) == 2 and parts[1].strip() not in ("", "."):
                     try: vals.append(float(parts[1]))
                     except ValueError: pass
+            if not vals:
+                raise ValueError("No data")
 
-        if not vals: return None, None, None
         latest   = vals[-1]
         chg_last = vals[-1] - vals[-2]  if len(vals) > 1  else None
         chg_yoy  = vals[-1] - vals[-13] if len(vals) > 13 else None
+        # Guardar en caché
+        _fred_cache[series_id] = [latest, chg_last, chg_yoy]
+        save_fred_cache(_fred_cache)
         return latest, chg_last, chg_yoy
+
     except Exception as e:
-        print(f"     ⚠️  FRED {series_id}: {e}")
+        # Intentar caché
+        if series_id in _fred_cache:
+            cached = _fred_cache[series_id]
+            print(f"     ⚠️  FRED {series_id} falla ({e}) — usando caché: {cached[0]}")
+            return tuple(cached)
+        print(f"     ⚠️  FRED {series_id}: {e} — sin caché disponible")
         return None, None, None
 
 def get_yf_macro(ticker):
@@ -506,6 +547,8 @@ def detect_cycle_phase(macro_results, prices_daily=None):
     fed_val,    fed_chg    = get_val("UNITED STATES", "Fed Funds Rate")
     spread_val, spread_chg = get_val("US YIELD CURVE", "10Y - 2Y")
     y10_val,    y10_chg    = get_val("US YIELD CURVE", "US 10Y Yield")
+    cli_val,    cli_chg    = get_val("UNITED STATES", "OECD CLI")
+    cfnai_val,  cfnai_chg  = get_val("UNITED STATES", "CFNAI")
 
     # ── Señales booleanas ─────────────────────────────────────────────────────
     gdp_growing    = gdp_val   is not None and gdp_val   > 0
@@ -518,6 +561,13 @@ def detect_cycle_phase(macro_results, prices_daily=None):
     rates_rising   = fed_chg   is not None and fed_chg   > 0
     rates_falling  = fed_chg   is not None and fed_chg   < 0
     rates_high     = fed_val   is not None and fed_val   > 4.0
+
+    # CLI y CFNAI
+    cli_expanding  = cli_val  is not None and cli_val  > 100        # CLI sobre 100 → expansión
+    cli_rising     = cli_chg  is not None and cli_chg  > 0          # CLI subiendo
+    cli_falling    = cli_chg  is not None and cli_chg  < 0          # CLI cayendo
+    cfnai_positive = cfnai_val is not None and cfnai_val > 0        # actividad sobre tendencia
+    cfnai_recession= cfnai_val is not None and cfnai_val < -0.7     # señal recesión fuerte
 
     # Curva de tipos — 4 estados con umbrales históricos calibrados
     curve_inverted    = spread_val is not None and spread_val < 0          # invertida → RecT/ExpL
@@ -546,6 +596,16 @@ def detect_cycle_phase(macro_results, prices_daily=None):
     else:
         y10_txt = "N/A"
 
+    # Textos CLI y CFNAI
+    if cli_val is not None:
+        cli_txt = ("▲ Expansión" if cli_expanding else "▼ Contracción") + (" ↑" if cli_rising else " ↓")
+    else:
+        cli_txt = "N/A"
+    if cfnai_val is not None:
+        cfnai_txt = "▲ Sólido" if cfnai_positive else ("⚠ Recesión" if cfnai_recession else "→ Débil")
+    else:
+        cfnai_txt = "N/A"
+
     signals = {
         "GDP QoQ":      ("▲ Creciendo" if gdp_growing  else "▼ Cayendo",   gdp_val,    gdp_chg),
         "Desempleo":    ("▼ Bajando"   if unemp_falling else "▲ Subiendo",  unemp_val,  unemp_chg),
@@ -553,6 +613,8 @@ def detect_cycle_phase(macro_results, prices_daily=None):
         "Fed Funds":    ("▲ Subiendo"  if rates_rising  else ("▼ Bajando"   if rates_falling else "→ Estable"), fed_val, fed_chg),
         "Curva 10Y-2Y": (curve_txt,    spread_val,  spread_chg),
         "10Y Yield":    (y10_txt,      y10_val,     y10_chg),
+        "OECD CLI":     (cli_txt,      cli_val,     cli_chg),
+        "CFNAI":        (cfnai_txt,    cfnai_val,   cfnai_chg),
     }
 
     # ── Scoring ───────────────────────────────────────────────────────────────
@@ -591,6 +653,16 @@ def detect_cycle_phase(macro_results, prices_daily=None):
     if y10_rising  and not gdp_growing: score[2] += 1  # tipos largos subiendo sin crecimiento → RecT
     if y10_falling and not gdp_growing: score[3] += 1  # tipos largos bajando en recesión → RecL
     if y10_falling and gdp_growing:     score[0] += 1  # tipos largos bajando con crecimiento → ExpT
+
+    # ── OECD CLI (indicador adelantado — peso 2) ─────────────────────────────
+    if cli_expanding and cli_rising:    score[0] += 2  # CLI>100 y subiendo → ExpT fuerte
+    if cli_expanding and not cli_rising: score[1] += 1 # CLI>100 pero cayendo → ExpL madurando
+    if not cli_expanding and cli_falling: score[2] += 2 # CLI<100 y cayendo → RecT
+    if not cli_expanding and cli_rising:  score[3] += 1 # CLI<100 pero subiendo → RecL
+
+    # ── CFNAI (actividad actual — peso 1) ────────────────────────────────────
+    if cfnai_positive:                  score[0] += 1; score[1] += 1  # actividad sólida
+    if cfnai_recession:                 score[2] += 2                  # señal recesión fuerte
 
     # ── VIX: sentimiento de mercado (MA25 vs MA200) ─────────────────────────
     vix_ma25 = vix_ma200 = vix_current = None
@@ -808,83 +880,79 @@ def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str):
     ws.row_dimensions[3].height = 13
 
     # ── Cabecera bloque indicadores ──
-    ws.merge_cells("A4:O4")
+    ws.merge_cells("A4:M4")
     ws["A4"] = "  6 Pilares del Ciclo  (PIB · Empleo · Inflación · Fed Funds · Curva de Tipos · 10Y Yield · VIX MA25/200)"
     ws["A4"].font = fnt(bold=True, color=LIGHT_GRAY, size=8)
     ws["A4"].fill = fill(HEADER_BG); ws["A4"].alignment = left(1)
     ws.row_dimensions[4].height = 13
 
-    # ── Bloque de 6 indicadores (2 filas x 3 columnas de 4 celdas cada una) ──
-    # Excluir VIX MA25/200 del bloque visual — se muestra en cabecera de pilares
-    signal_list = [(k, v) for k, v in signals.items() if k != "VIX MA25/200"][:6]
-    # Fila 5-7: primeros 3 indicadores | Fila 5-7 cols 7-12: siguientes 3
-    for block_row, block_items in enumerate([(signal_list[:3]), (signal_list[3:])]):
-        base_col = 1 + block_row * 6
-        for i, (ind_name, (status, val, chg)) in enumerate(block_items):
-            col = base_col + i * 2
+    # ── Bloque de indicadores: 3 filas x 3 cols (A-I) + VIX en cols J-M ──────
+    # Fila 5-7:  GDP · Desempleo · CPI
+    # Fila 8-10: Fed Funds · Curva · 10Y
+    # Fila 11-13: OECD CLI · CFNAI · VIX MA25/200
+    positive_keywords = {"▲ Creciendo", "▼ Bajando", "✓ Moderado", "Empinada ▲",
+                         "Normalizando ↗", "▲ Expansión ↑", "▲ Sólido"}
 
-            c = ws.cell(row=5, column=col, value=ind_name)
-            c.font = fnt(bold=True, color=MID_GRAY, size=8); c.fill = fill(DARK_BG); c.alignment = center()
-            ws.merge_cells(start_row=5, start_column=col, end_row=5, end_column=col+1)
-
-            val_str = f"{val:.2f}" if val is not None else "N/A"
-            chg_str = f" ({'+' if chg and chg > 0 else ''}{chg:.2f})" if chg is not None else ""
-            c2 = ws.cell(row=6, column=col, value=f"{val_str}{chg_str}")
-            c2.font = fnt(bold=True, size=9); c2.fill = fill(DARK_BG); c2.alignment = center()
-            ws.merge_cells(start_row=6, start_column=col, end_row=6, end_column=col+1)
-
-            # Color de señal: verde si positivo para el ciclo, rojo si negativo
-            positive_keywords = {"▲ Creciendo", "▼ Bajando", "✓ Moderado", "▼ Bajando", "Empinada ▲", "Normalizando ↗"}
-            is_green = status in positive_keywords or (ind_name == "10Y Yield" and "▼" in status)
-            is_red   = not is_green and status != "N/A" and "→" not in status
-            tc = "27AE60" if is_green else ("E74C3C" if is_red else MID_GRAY)
-            c3 = ws.cell(row=7, column=col, value=status)
-            c3.font = fnt(bold=True, color=tc, size=8)
-            c3.fill = fill(DARK_BG); c3.alignment = center()
-            ws.merge_cells(start_row=7, start_column=col, end_row=7, end_column=col+1)
-
-    # Columna 13 vacía de separación
-    for r in range(5, 8):
-        ws.cell(row=r, column=13).fill = fill(DARK_BG)
-
-    # ── VIX MA25/200 en columnas N-O (14-15) ──
-    vix_signal = signals.get("VIX MA25/200")
-    if vix_signal:
-        vix_status, vix_val, vix_diff = vix_signal
-        # Fila 5: label
-        ws.merge_cells("N5:O5")
-        c = ws["N5"]; c.value = "VIX MA25/200"
+    def write_indicator_block(ws, row, col, ind_name, status, val, chg):
+        c = ws.cell(row=row, column=col, value=ind_name)
         c.font = fnt(bold=True, color=MID_GRAY, size=8); c.fill = fill(DARK_BG); c.alignment = center()
-        # Fila 6: valor
-        ws.merge_cells("N6:O6")
-        c2 = ws["N6"]; c2.value = f"{vix_val:.2f} ({('+' if vix_diff > 0 else '')}{vix_diff:.2f})"
+        ws.merge_cells(start_row=row, start_column=col, end_row=row, end_column=col+1)
+        val_str = f"{val:.2f}" if val is not None else "N/A"
+        chg_str = f" ({'+' if chg and chg > 0 else ''}{chg:.2f})" if chg is not None else ""
+        c2 = ws.cell(row=row+1, column=col, value=f"{val_str}{chg_str}")
         c2.font = fnt(bold=True, size=9); c2.fill = fill(DARK_BG); c2.alignment = center()
-        # Fila 7: estado
-        ws.merge_cells("N7:O7")
-        is_red = "Deteriorando" in vix_status
-        tc = "E74C3C" if is_red else "27AE60"
-        c3 = ws["N7"]; c3.value = vix_status
+        ws.merge_cells(start_row=row+1, start_column=col, end_row=row+1, end_column=col+1)
+        is_green = any(k in status for k in ("Creciendo","Bajando","Moderado","Empinada","Normalizando","Expansión ↑","Sólido"))
+        is_red   = any(k in status for k in ("Cayendo","Subiendo","Alto","Invertida","Contracción","Recesión","Deteriorando"))
+        tc = "27AE60" if is_green else ("E74C3C" if is_red else MID_GRAY)
+        c3 = ws.cell(row=row+2, column=col, value=status)
         c3.font = fnt(bold=True, color=tc, size=8); c3.fill = fill(DARK_BG); c3.alignment = center()
-    else:
-        for r in range(5, 8):
-            ws.merge_cells(start_row=r, start_column=14, end_row=r, end_column=15)
-            ws.cell(row=r, column=14).fill = fill(DARK_BG)
+        ws.merge_cells(start_row=row+2, start_column=col, end_row=row+2, end_column=col+1)
+        ws.row_dimensions[row].height   = 13
+        ws.row_dimensions[row+1].height = 16
+        ws.row_dimensions[row+2].height = 13
 
-    ws.row_dimensions[5].height = 13
-    ws.row_dimensions[6].height = 16
-    ws.row_dimensions[7].height = 13
+    # Fila 1 de indicadores (fila 5): GDP · Desempleo · CPI
+    write_indicator_block(ws, 5, 1,  "GDP QoQ",   *signals["GDP QoQ"])
+    write_indicator_block(ws, 5, 3,  "Desempleo", *signals["Desempleo"])
+    write_indicator_block(ws, 5, 5,  "CPI YoY",   *signals["CPI YoY"])
+    # Separador
+    for r in range(5,8):
+        for c in [7]: ws.cell(row=r, column=c).fill = fill(DARK_BG)
 
-    # ── Separador ──
-    ws.row_dimensions[8].height = 6
+    # Fila 2 de indicadores (fila 8): Fed Funds · Curva · 10Y
+    write_indicator_block(ws, 8, 1,  "Fed Funds",    *signals["Fed Funds"])
+    write_indicator_block(ws, 8, 3,  "Curva 10Y-2Y", *signals["Curva 10Y-2Y"])
+    write_indicator_block(ws, 8, 5,  "10Y Yield",    *signals["10Y Yield"])
+    # Separador
+    for r in range(8,11):
+        for c in [7]: ws.cell(row=r, column=c).fill = fill(DARK_BG)
+
+    # Fila 3 de indicadores (fila 11): OECD CLI · CFNAI · VIX MA25/200
+    write_indicator_block(ws, 11, 1, "OECD CLI", *signals.get("OECD CLI", ("N/A", None, None)))
+    write_indicator_block(ws, 11, 3, "CFNAI",    *signals.get("CFNAI",    ("N/A", None, None)))
+    vix_sig = signals.get("VIX MA25/200", ("N/A", None, None))
+    write_indicator_block(ws, 11, 5, "VIX MA25/200", *vix_sig)
+    # Separador
+    for r in range(11,14):
+        for c in [7]: ws.cell(row=r, column=c).fill = fill(DARK_BG)
+
+    # Columnas 8-13 con fondo oscuro en filas de indicadores
+    for r in range(5, 14):
+        for c in range(8, 14):
+            ws.cell(row=r, column=c).fill = fill(DARK_BG)
+
+    # ── Separador tras indicadores ──
+    ws.row_dimensions[14].height = 6
     for c in range(1, 14):
-        ws.cell(row=8, column=c).fill = fill(DARK_BG)
+        ws.cell(row=14, column=c).fill = fill(DARK_BG)
 
     # ── Sub-cabecera pesos ──
-    ws.merge_cells("D9:G9")
-    c = ws.cell(row=9, column=4, value="Pesos por fase")
+    ws.merge_cells("D15:G15")
+    c = ws.cell(row=15, column=4, value="Pesos por fase")
     c.font = fnt(bold=True, color=LIGHT_GRAY, size=8)
     c.fill = fill(SECTION_BG); c.alignment = center()
-    ws.row_dimensions[9].height = 13
+    ws.row_dimensions[15].height = 13
 
     # ── Cabeceras tabla ──
     headers = ["Sector", "Ticker", "Precio",
@@ -893,17 +961,15 @@ def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str):
     widths  = [18, 7, 9, 10, 10, 10, 10, 11, 8, 8, 8, 12, 10]
 
     for ci, (h, w) in enumerate(zip(headers, widths), 1):
-        c = ws.cell(row=10, column=ci, value=h)
+        c = ws.cell(row=16, column=ci, value=h)
         c.font = fnt(bold=True, color=LIGHT_GRAY, size=8)
         c.fill = fill(HEADER_BG); c.alignment = center()
         ws.column_dimensions[get_column_letter(ci)].width = w
-    # Columnas N y O para VIX MA
-    ws.column_dimensions["N"].width = 8
-    ws.column_dimensions["O"].width = 8
-    ws.row_dimensions[10].height = 15
+
+    ws.row_dimensions[16].height = 15
 
     # ── Filas de sectores ──
-    er = 11
+    er = 17
     for sd in sector_data:
         alerta    = sd["alerta"]
         rec_w     = sd["rec_weight"]
