@@ -1557,68 +1557,64 @@ def publish_substack(substack_sid, publication_slug, title, body_html, today_str
 
 
 def generate_gauge_svg(degrees, phase_name, phase_idx):
-    """Genera un SVG de gauge semicircular para el newsletter."""
+    """Genera gauge como HTML puro compatible con Gmail."""
     import math
 
-    # Colores por fase
     phase_colors = ["#27AE60", "#F39C12", "#E74C3C", "#8E44AD"]
     color = phase_colors[phase_idx]
 
-    # Convertir grados del ciclo (0-360) a ángulo del gauge semicircular
-    # El gauge va de -180° a 0° (semicírculo superior)
-    # 0° ciclo = -180° gauge (izquierda) | 360° = 0° gauge (derecha)
-    gauge_angle = -180 + (degrees / 360) * 180
+    # Convertir grados del ciclo a porcentaje del arco (0-100%)
+    # 0° ciclo = izquierda | 360° = derecha
+    pct = (degrees / 360) * 100
 
-    # Posición de la aguja
-    rad = math.radians(gauge_angle)
-    needle_x = 150 + 90 * math.cos(rad)
-    needle_y = 150 + 90 * math.sin(rad)
-
-    # Etiquetas de fases en el arco
-    labels = [
-        (-160, "ExpT", "#27AE60"),
-        (-120, "ExpL", "#F39C12"),
-        (-60,  "RecT", "#E74C3C"),
-        (-20,  "RecL", "#8E44AD"),
+    # Barra de progreso con 4 segmentos de color
+    segments = [
+        ("#27AE60", "ExpT 0-90°"),
+        ("#F39C12", "ExpL 90-180°"),
+        ("#E74C3C", "RecT 180-270°"),
+        ("#8E44AD", "RecL 270-360°"),
     ]
 
-    label_els = ""
-    for angle, label, lcolor in labels:
-        r = math.radians(angle)
-        lx = 150 + 115 * math.cos(r)
-        ly = 150 + 115 * math.sin(r)
-        label_els += f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="middle" font-size="11" fill="{lcolor}" font-family="Arial" font-weight="bold">{label}</text>\n'
+    seg_html = ""
+    for sc, _ in segments:
+        seg_html += f'<td style="width:25%; background:{sc}; height:14px; opacity:0.7;"></td>\n'
 
-    # Arcos de colores (4 sectores de 45° cada uno en el semicírculo)
-    def arc_path(start_deg, end_deg, r=95):
-        s = math.radians(start_deg)
-        e = math.radians(end_deg)
-        x1 = 150 + r * math.cos(s)
-        y1 = 150 + r * math.sin(s)
-        x2 = 150 + r * math.cos(e)
-        y2 = 150 + r * math.sin(e)
-        return f"M 150 150 L {x1:.1f} {y1:.1f} A {r} {r} 0 0 1 {x2:.1f} {y2:.1f} Z"
+    # Marcador de posición
+    marker_left = max(2, min(96, pct))
 
-    sector_colors = ["#27AE60", "#F39C12", "#E74C3C", "#8E44AD"]
-    sectors = ""
-    for i, sc in enumerate(sector_colors):
-        start = -180 + i * 45
-        end   = -180 + (i + 1) * 45
-        sectors += f'<path d="{arc_path(start, end)}" fill="{sc}" opacity="0.25"/>\n'
-        sectors += f'<path d="{arc_path(start, end, 70)}" fill="white" opacity="1"/>\n'
-
-    svg = f"""<svg width="300" height="160" viewBox="0 0 300 160" xmlns="http://www.w3.org/2000/svg">
-  <rect width="300" height="160" fill="#1C2634" rx="8"/>
-  {sectors}
-  <path d="M 55 150 A 95 95 0 0 1 245 150" fill="none" stroke="#2C3E50" stroke-width="20"/>
-  <path d="M 75 150 A 75 75 0 0 1 225 150" fill="none" stroke="{color}" stroke-width="4" opacity="0.6"/>
-  <line x1="150" y1="150" x2="{needle_x:.1f}" y2="{needle_y:.1f}" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
-  <circle cx="150" cy="150" r="6" fill="white"/>
-  {label_els}
-  <text x="150" y="145" text-anchor="middle" font-size="13" fill="white" font-family="Arial" font-weight="bold">{degrees:.1f}°</text>
-  <text x="150" y="158" text-anchor="middle" font-size="10" fill="{color}" font-family="Arial">{phase_name}</text>
-</svg>"""
-    return svg
+    return f"""
+<table width="300" cellpadding="0" cellspacing="0" style="border-collapse:collapse; background:#1C2634; border-radius:8px; padding:12px; font-family:Arial,sans-serif;">
+  <tr>
+    <td colspan="4" style="padding:8px 8px 4px; text-align:center; color:#ffffff; font-size:13px; font-weight:bold;">
+      {degrees:.1f}° — <span style="color:{color};">{phase_name}</span>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="4" style="padding:0 8px 4px;">
+      <table width="100%" cellpadding="0" cellspacing="1" style="border-collapse:separate; border-radius:4px; overflow:hidden;">
+        <tr>{seg_html}</tr>
+      </table>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="4" style="padding:0 8px 4px; position:relative; height:12px;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td width="{marker_left:.0f}%" style="text-align:right;">
+            <span style="display:inline-block; width:0; height:0; border-left:5px solid transparent; border-right:5px solid transparent; border-bottom:8px solid white;"></span>
+          </td>
+          <td width="{100-marker_left:.0f}%"></td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:0 8px 8px; text-align:left; color:#27AE60; font-size:10px;">ExpT</td>
+    <td style="padding:0 8px 8px; text-align:center; color:#F39C12; font-size:10px;">ExpL</td>
+    <td style="padding:0 8px 8px; text-align:center; color:#E74C3C; font-size:10px;">RecT</td>
+    <td style="padding:0 8px 8px; text-align:right; color:#8E44AD; font-size:10px;">RecL</td>
+  </tr>
+</table>"""
 
 
 def build_substack_html(narrative, phase_idx, phase_name, signals, sector_data, score, today_str, degrees=45):
