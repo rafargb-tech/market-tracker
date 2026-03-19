@@ -1636,6 +1636,11 @@ def build_substack_html(narrative, phase_idx, phase_name, signals, sector_data, 
         0: "#27AE60", 1: "#F39C12", 2: "#E74C3C", 3: "#8E44AD"
     }[phase_idx]
 
+    gauge_svg = generate_gauge_svg(degrees, phase_name, phase_idx)
+    phase_center = phase_idx * 90 + 45
+    dist_to_center = abs(degrees - phase_center)
+    intensity = "central" if dist_to_center < 20 else ("límite" if dist_to_center > 35 else "moderada")
+
     top_sectors = sorted(sector_data, key=lambda x: x["rec_weight"], reverse=True)[:5]
     sectors_rows = "".join(
         f"<tr><td><b>{sd['name']}</b></td><td>{sd['ticker']}</td>"
@@ -1646,10 +1651,7 @@ def build_substack_html(narrative, phase_idx, phase_name, signals, sector_data, 
         for sd in top_sectors
     )
 
-    score_str = " · ".join(
-        f"<b>{PHASE_NAMES[i]}</b>: {score[i]}{'◄' if i == phase_idx else ''}"
-        for i in range(4)
-    )
+    score_str = f"posición {intensity}"
 
     # Convertir markdown básico a HTML
     def md_to_html(text):
