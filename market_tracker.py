@@ -1275,7 +1275,7 @@ def main():
         print("   🤖 Generando narrativa con Claude...")
         narrative = generate_narrative(
             anthropic_key, None,
-            PHASE_NAMES[phase_idx], signals, sector_data, today_str
+            PHASE_NAMES[phase_idx], signals, sector_data, today_str, degrees, phase_idx
         )
         if narrative:
             print(f"   ✅ Narrativa generada ({len(narrative)} chars)")
@@ -1389,7 +1389,7 @@ def scrape_advfn(date_str):
         return None
 
 
-def generate_narrative(api_key, advfn_text, phase_name, signals, sector_data, today_str):
+def generate_narrative(api_key, advfn_text, phase_name, signals, sector_data, today_str, degrees=135, phase_idx=1):
     """
     Usa Claude API para generar la narrativa del newsletter.
     """
