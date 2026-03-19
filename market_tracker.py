@@ -1119,7 +1119,7 @@ def build_highlights(market_rows, sector_data, signals, phase_idx):
     return highlights
 
 
-def send_discord(webhook_url, output_file, phase_idx, score, signals, sector_data, market_rows, today_str):
+def send_discord(webhook_url, output_file, phase_idx, score, signals, sector_data, market_rows, today_str, degrees=135):
     """Envía resumen + Excel adjunto al canal de Discord via webhook."""
     import os, json
     import requests
@@ -1262,7 +1262,7 @@ def main():
     print("\n📣 Enviando a Discord...")
     import os
     webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
-    send_discord(webhook_url, output, phase_idx, score, signals, sector_data, market_rows, today_str)
+    send_discord(webhook_url, output, phase_idx, score, signals, sector_data, market_rows, today_str, degrees)
 
     print("\n📰 Generando newsletter Substack...")
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
