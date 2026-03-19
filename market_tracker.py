@@ -531,9 +531,20 @@ PHASE_KEYS   = ["exp_early", "exp_late", "rec_early", "rec_late"]
 
 def detect_cycle_phase(macro_results, prices_daily=None):
     """
-    Determina la fase del ciclo usando 5 pilares:
-    PIB + Empleo + Inflación + Fed Funds + Curva de tipos (10Y-2Y) + Nivel 10Y
+    Sistema de promedio circular ponderado para determinar fase del ciclo.
+    Cada indicador vota a un angulo objetivo con un peso.
+    0-90: ExpT | 90-180: ExpL | 180-270: RecT | 270-360: RecL
     """
+    import math
+
+    EXP_T, EXP_L, REC_T, REC_L = 45, 135, 225, 315
+
+    def weighted_circular_mean(votes):
+        if not votes: return 135.0
+        sin_sum = sum(w * math.sin(math.radians(a)) for a, w in votes)
+        cos_sum = sum(w * math.cos(math.radians(a)) for a, w in votes)
+        return math.degrees(math.atan2(sin_sum, cos_sum)) % 360
+
     def get_val(region, name):
         for r, indicators in macro_results.items():
             for n, unit, val, chg_last, chg_yoy, note in indicators:
@@ -558,126 +569,118 @@ def detect_cycle_phase(macro_results, prices_daily=None):
     cli_val,    cli_chg    = get_val("UNITED STATES", "OECD CLI")
     cfnai_val,  cfnai_chg  = get_val("UNITED STATES", "CFNAI")
 
-    # ── Señales booleanas ─────────────────────────────────────────────────────
+    # ── Señales derivadas ─────────────────────────────────────────────────────
     gdp_growing    = gdp_val   is not None and gdp_val   > 0
-    gdp_strong     = gdp_val   is not None and gdp_val   > 2.5
     unemp_falling  = unemp_chg is not None and unemp_chg < 0
     unemp_rising   = unemp_chg is not None and unemp_chg > 0
     unemp_high     = unemp_val is not None and unemp_val > 5.0
     cpi_high       = cpi_val   is not None and cpi_val   > 3.0
     cpi_rising     = cpi_chg   is not None and cpi_chg   > 0
-    # Señales Fed — usar tendencia 12 meses para evitar ruido de pausa
-    rates_rising   = fed_yoy  is not None and fed_yoy  > 0.25   # subió >25bps en 12m
-    rates_falling  = fed_yoy  is not None and fed_yoy  < -0.25  # bajó >25bps en 12m
-    rates_stable   = not rates_rising and not rates_falling       # en pausa
-    rates_high     = fed_val  is not None and fed_val  > 4.0
+    rates_rising   = fed_yoy   is not None and fed_yoy   > 0.25
+    rates_falling  = fed_yoy   is not None and fed_yoy   < -0.25
+    rates_high     = fed_val   is not None and fed_val   > 4.0
 
-    # CLI y CFNAI
-    cli_expanding  = cli_val  is not None and cli_val  > 100        # CLI sobre 100 → expansión
-    cli_rising     = cli_chg  is not None and cli_chg  > 0          # CLI subiendo
-    cli_falling    = cli_chg  is not None and cli_chg  < 0          # CLI cayendo
-    cfnai_positive = cfnai_val is not None and cfnai_val > 0        # actividad sobre tendencia
-    cfnai_recession= cfnai_val is not None and cfnai_val < -0.7     # señal recesión fuerte
-
-    # Curva de tipos — 4 estados con umbrales históricos calibrados
-    curve_inverted    = spread_val is not None and spread_val < 0          # invertida → RecT/ExpL
+    # Curva
+    curve_inverted    = spread_val is not None and spread_val < 0
     curve_normalizing = (spread_val is not None and spread_chg is not None
-                         and spread_val < 0.5 and spread_chg > 0)          # saliendo de inversión → RecL
-    curve_normal      = spread_val is not None and 0.3 < spread_val <= 1.5 # normalizada → compatible ExpT/ExpL
-    curve_steep       = spread_val is not None and spread_val > 1.5        # empinada genuina → ExpT fuerte
+                         and spread_val < 0.5 and spread_chg > 0)
+    curve_normal      = spread_val is not None and 0.3 < spread_val <= 1.5
+    curve_steep       = spread_val is not None and spread_val > 1.5
 
-    # Nivel del 10Y
-    y10_rising  = y10_chg is not None and y10_chg > 0
-    y10_falling = y10_chg is not None and y10_chg < 0
-    y10_high    = y10_val is not None and y10_val > 4.0
-
-    # ── Señales para mostrar en pantalla (6 pilares) ──────────────────────────
     if spread_val is not None:
-        if curve_inverted:    curve_txt = "Invertida ▼"
+        if curve_inverted:      curve_txt = "Invertida ▼"
         elif curve_normalizing: curve_txt = "Normalizando ↗"
-        elif curve_steep:     curve_txt = "Empinada ▲"
-        elif curve_normal:    curve_txt = "Normal →"
-        else:                 curve_txt = "Plana →"
+        elif curve_steep:       curve_txt = "Empinada ▲"
+        elif curve_normal:      curve_txt = "Normal →"
+        else:                   curve_txt = "Plana →"
     else:
         curve_txt = "N/A"
 
-    if y10_val is not None:
-        y10_txt = f"{'▲ Subiendo' if y10_rising else ('▼ Bajando' if y10_falling else '→ Estable')}"
-    else:
-        y10_txt = "N/A"
+    y10_rising  = y10_chg is not None and y10_chg > 0
+    y10_falling = y10_chg is not None and y10_chg < 0
+    y10_txt = ("▲ Subiendo" if y10_rising else ("▼ Bajando" if y10_falling else "→ Estable")) if y10_val else "N/A"
 
-    # Textos CLI y CFNAI
+    cli_expanding   = cli_val is not None and cli_val > 100.2
+    cli_contracting = cli_val is not None and cli_val < 99.5
+    cli_rising_bool = cli_chg is not None and cli_chg > 0
+    cli_falling_bool= cli_chg is not None and cli_chg < 0
+
     if cli_val is not None:
-        cli_txt = ("▲ Expansión" if cli_expanding else "▼ Contracción") + (" ↑" if cli_rising else " ↓")
+        cli_base = "▲ Expansión" if cli_expanding else ("▼ Contracción" if cli_contracting else "→ Neutral")
+        cli_txt  = cli_base + (" ↑" if cli_rising_bool else " ↓")
     else:
         cli_txt = "N/A"
+
+    cfnai_positive = cfnai_val is not None and cfnai_val > 0.1
+    cfnai_recession= cfnai_val is not None and cfnai_val < -0.7
+    cfnai_txt = ("▲ Sólido" if cfnai_positive else ("⚠ Recesión" if cfnai_recession else "→ Débil")) if cfnai_val is not None else "N/A"
+    fed_txt = "▲ Subiendo" if rates_rising else ("▼ Bajando" if rates_falling else "→ Pausa")
+
+    # ── VOTOS ─────────────────────────────────────────────────────────────────
+    votes = []
+
+    # GDP (peso 8)
+    if gdp_val is not None:
+        if gdp_val > 3.0:       votes.append((EXP_T, 8))
+        elif gdp_val > 1.5:     votes.append((EXP_T, 5)); votes.append((EXP_L, 3))
+        elif gdp_val > 0:       votes.append((EXP_L, 5)); votes.append((EXP_T, 3))
+        elif gdp_val > -1.0:    votes.append((REC_T, 4)); votes.append((REC_L, 4))
+        else:                   votes.append((REC_T, 6)); votes.append((REC_L, 2))
+
+    # Desempleo (peso 7)
+    if unemp_chg is not None:
+        if unemp_chg < -0.1:                            votes.append((EXP_T, 7))
+        elif unemp_chg < 0:                             votes.append((EXP_T, 4)); votes.append((EXP_L, 3))
+        elif unemp_chg < 0.1:                           votes.append((EXP_L, 4)); votes.append((REC_T, 3))
+        elif not unemp_high:                            votes.append((REC_T, 4)); votes.append((EXP_L, 3))
+        elif unemp_high and rates_falling:              votes.append((REC_L, 5)); votes.append((REC_T, 2))
+        else:                                           votes.append((REC_T, 4)); votes.append((REC_L, 3))
+
+    # CPI (peso 6)
+    if cpi_val is not None:
+        if cpi_val > 5.0:       votes.append((REC_T, 6))
+        elif cpi_val > 3.0:     votes.append((EXP_L, 4)); votes.append((REC_T, 2))
+        elif cpi_val > 2.0:     votes.append((EXP_L, 3)); votes.append((EXP_T, 3))
+        elif cpi_val > 1.0:     votes.append((EXP_T, 3)); votes.append((REC_L, 3))
+        else:                   votes.append((REC_L, 5)); votes.append((EXP_T, 1))
+
+    # Fed (peso 6)
+    if fed_val is not None:
+        if rates_rising:                                        votes.append((EXP_L, 6))
+        elif rates_falling and not gdp_growing and unemp_high: votes.append((REC_L, 6))
+        elif rates_falling and gdp_growing:                     votes.append((EXP_T, 4)); votes.append((REC_L, 2))
+        elif rates_falling:                                     votes.append((REC_L, 4)); votes.append((REC_T, 2))
+        elif rates_high:                                        votes.append((EXP_L, 4)); votes.append((REC_T, 2))
+        else:                                                   votes.append((EXP_L, 4)); votes.append((EXP_T, 2))
+
+    # Curva 10Y-2Y (peso 7)
+    if spread_val is not None:
+        if spread_val > 1.5:    votes.append((EXP_T, 7))
+        elif spread_val > 0.8:  votes.append((EXP_T, 4)); votes.append((EXP_L, 3))
+        elif spread_val > 0.3:  votes.append((EXP_L, 4)); votes.append((EXP_T, 3))
+        elif spread_val > 0:    votes.append((EXP_L, 4)); votes.append((REC_T, 3))
+        elif spread_val > -0.5: votes.append((REC_T, 5)); votes.append((EXP_L, 2))
+        else:                   votes.append((REC_T, 5)); votes.append((REC_L, 2))
+
+    # OECD CLI (peso 8)
+    if cli_val is not None:
+        if cli_val > 101.0:     votes.append((EXP_T, 8))
+        elif cli_val > 100.2:   votes.append((EXP_T, 5)); votes.append((EXP_L, 3))
+        elif cli_val > 99.5:    votes.append((EXP_L, 4)); votes.append((EXP_T, 4))
+        elif cli_val > 98.5:    votes.append((REC_T, 4)); votes.append((EXP_L, 4))
+        elif cli_val > 97.0:    votes.append((REC_T, 6)); votes.append((REC_L, 2))
+        else:                   votes.append((REC_T, 5)); votes.append((REC_L, 3))
+
+    # CFNAI (peso 5)
     if cfnai_val is not None:
-        cfnai_txt = "▲ Sólido" if cfnai_positive else ("⚠ Recesión" if cfnai_recession else "→ Débil")
-    else:
-        cfnai_txt = "N/A"
+        if cfnai_val > 0.5:     votes.append((EXP_T, 5))
+        elif cfnai_val > 0.1:   votes.append((EXP_T, 3)); votes.append((EXP_L, 2))
+        elif cfnai_val > -0.1:  votes.append((EXP_L, 3)); votes.append((REC_T, 2))
+        elif cfnai_val > -0.7:  votes.append((REC_T, 3)); votes.append((REC_L, 2))
+        else:                   votes.append((REC_T, 3)); votes.append((REC_L, 2))
 
-    signals = {
-        "GDP QoQ":      ("▲ Creciendo" if gdp_growing  else "▼ Cayendo",   gdp_val,    gdp_chg),
-        "Desempleo":    ("▼ Bajando"   if unemp_falling else "▲ Subiendo",  unemp_val,  unemp_chg),
-        "CPI YoY":      ("▲ Alto"      if cpi_high      else "✓ Moderado",  cpi_val,    cpi_chg),
-        "Fed Funds":    ("▲ Subiendo"  if rates_rising  else ("▼ Bajando"   if rates_falling else "→ Pausa"), fed_val, fed_yoy),
-        "Curva 10Y-2Y": (curve_txt,    spread_val,  spread_chg),
-        "10Y Yield":    (y10_txt,      y10_val,     y10_chg),
-        "OECD CLI":     (cli_txt,      cli_val,     cli_chg),
-        "CFNAI":        (cfnai_txt,    cfnai_val,   cfnai_chg),
-    }
-
-    # ── Scoring ───────────────────────────────────────────────────────────────
-    score = [0, 0, 0, 0]  # [ExpT, ExpL, RecT, RecL]
-
-    # Señales fuertes (peso 3)
-    if gdp_growing and unemp_falling and not cpi_high and not rates_high:
-        score[0] += 3
-    if gdp_strong and cpi_high and rates_rising:
-        score[1] += 3
-    if not gdp_growing and unemp_rising and cpi_high:
-        score[2] += 3
-    if not gdp_growing and unemp_high and not cpi_rising and (rates_falling or not rates_high):
-        score[3] += 3
-
-    # Señales de refuerzo macro (peso 1)
-    if gdp_growing:    score[0] += 1; score[1] += 1
-    if unemp_falling:  score[0] += 1
-    if unemp_rising:   score[2] += 1; score[3] += 1
-    if cpi_high:       score[1] += 1; score[2] += 1
-    if rates_rising:                                      score[1] += 1   # Fed subiendo → ExpL
-    if rates_falling and (unemp_high or not gdp_growing): score[3] += 1   # Fed baja con debilidad → RecL
-    if rates_falling and gdp_growing and not unemp_high:  score[0] += 1   # Fed baja con economía sana → ExpT
-    if rates_high:                                        score[1] += 1   # Tipos altos → compatible ExpL
-
-    # Señales de curva (peso 2 — indicador adelantado)
-    if curve_steep:                        score[0] += 2   # empinada genuina → ExpT fuerte
-    if curve_normal:    score[0] += 1;     score[1] += 1   # normal → compatible ambas expansiones
-    if curve_inverted:  score[1] += 1;     score[2] += 2   # invertida → ExpL tardía o RecT próxima
-    if curve_normalizing:                  score[3] += 2   # normalizando → RecL
-
-    # Señal extra: curva muy invertida refuerza RecT
-    if spread_val is not None and spread_val < -0.5:
-        score[2] += 1
-
-    # Señales del 10Y (peso 1)
-    if y10_rising  and gdp_growing:     score[1] += 1  # tipos largos subiendo con crecimiento → ExpL
-    if y10_rising  and not gdp_growing: score[2] += 1  # tipos largos subiendo sin crecimiento → RecT
-    if y10_falling and not gdp_growing: score[3] += 1  # tipos largos bajando en recesión → RecL
-    if y10_falling and gdp_growing:     score[0] += 1  # tipos largos bajando con crecimiento → ExpT
-
-    # ── OECD CLI (indicador adelantado — peso 2) ─────────────────────────────
-    if cli_expanding and cli_rising:    score[0] += 2  # CLI>100 y subiendo → ExpT fuerte
-    if cli_expanding and not cli_rising: score[1] += 1 # CLI>100 pero cayendo → ExpL madurando
-    if not cli_expanding and cli_falling: score[2] += 2 # CLI<100 y cayendo → RecT
-    if not cli_expanding and cli_rising:  score[3] += 1 # CLI<100 pero subiendo → RecL
-
-    # ── CFNAI (actividad actual — peso 1) ────────────────────────────────────
-    if cfnai_positive:                  score[0] += 1; score[1] += 1  # actividad sólida
-    if cfnai_recession:                 score[2] += 2                  # señal recesión fuerte
-
-    # ── VIX: sentimiento de mercado (MA25 vs MA200) ─────────────────────────
-    vix_ma25 = vix_ma200 = vix_current = None
+    # VIX MA25/200 (peso 4)
+    vix_ma25 = vix_ma200 = None
     try:
         vix_df = yf.download("^VIX", period="2y", auto_adjust=True, progress=False)
         if not vix_df.empty:
@@ -685,72 +688,59 @@ def detect_cycle_phase(macro_results, prices_daily=None):
             if hasattr(vix_series, "columns"):
                 vix_series = vix_series.iloc[:, 0]
             if len(vix_series) >= 200:
-                vix_ma25    = float(vix_series.rolling(25).mean().iloc[-1])
-                vix_ma200   = float(vix_series.rolling(200).mean().iloc[-1])
-                vix_current = float(vix_series.iloc[-1])
+                vix_ma25  = float(vix_series.rolling(25).mean().iloc[-1])
+                vix_ma200 = float(vix_series.rolling(200).mean().iloc[-1])
     except Exception:
         pass
 
-    # Señales basadas en medias — estables, no sensibles al ruido intradía
-    vix_fear        = vix_ma25  is not None and vix_ma25  > 25    # MA25 en zona de miedo
-    vix_panic       = vix_ma25  is not None and vix_ma25  > 35    # MA25 en zona de pánico
-    vix_deteriorating = (vix_ma25 is not None and vix_ma200 is not None
-                         and vix_ma25 > vix_ma200)                 # tendencia alcista en VIX
-    vix_improving   = (vix_ma25 is not None and vix_ma200 is not None
-                       and vix_ma25 < vix_ma200)                   # tendencia bajista en VIX
+    vix_deteriorating = vix_ma25 is not None and vix_ma200 is not None and vix_ma25 > vix_ma200
+    vix_improving     = vix_ma25 is not None and vix_ma200 is not None and vix_ma25 < vix_ma200
+    vix_fear          = vix_ma25 is not None and vix_ma25 > 25
+    vix_panic         = vix_ma25 is not None and vix_ma25 > 35
 
-    # Añadir señales VIX al diccionario signals para mostrarlo en SPI
     if vix_ma25 is not None and vix_ma200 is not None:
         vix_trend_txt = "↑ Deteriorando" if vix_deteriorating else "↓ Mejorando"
-        signals["VIX MA25/200"] = (vix_trend_txt, vix_ma25, vix_ma25 - vix_ma200)
-
-    # Penalizar expansión si tendencia VIX es alcista (sentimiento deteriorándose)
-    if vix_deteriorating:
-        score[0] = max(0, score[0] - 1)   # ExpT penalizada
-    if vix_fear:
-        score[0] = max(0, score[0] - 1)   # ExpT penalizada adicional si MA25 > 25
-        score[1] = max(0, score[1] - 1)   # ExpL también
-    if vix_panic:
-        score[0] = max(0, score[0] - 1)   # ExpT muy penalizada en pánico
-        score[2] += 1                      # RecT más probable en pánico
-    if vix_improving:
-        score[0] += 1                      # ExpT favorecida si VIX mejorando
-
-    # ── Inercia: exigir margen mínimo para cambiar de fase ───────────────────
-    # ExpT es la fase más "optimista" — exigir margen de 2 puntos sobre el segundo
-    sorted_scores = sorted(enumerate(score), key=lambda x: x[1], reverse=True)
-    top_phase, top_score = sorted_scores[0]
-    second_score = sorted_scores[1][1]
-
-    # Si ExpT gana pero por menos de 2 puntos y desempleo no está cayendo → no es ExpT clara
-    if top_phase == 0 and (top_score - second_score) < 2 and not unemp_falling:
-        # Desempate: ceder a la segunda fase
-        score[0] = max(0, score[0] - 1)
-
-    # ── Confirmación macro mínima ─────────────────────────────────────────────
-    # ExpT requiere confirmación real: crecimiento + desempleo no subiendo + tipos no altos
-    macro_confirms_expt = gdp_growing and not unemp_rising and not rates_high
-    # ExpL requiere ciclo maduro: crecimiento + presión inflacionista o de tipos
-    macro_confirms_expl = gdp_growing and (cpi_high or rates_high or rates_rising)
-    # Si la curva vota ExpT pero la macro no lo confirma, penalizar más fuerte
-    if not macro_confirms_expt and score[0] == max(score):
-        score[0] = max(0, score[0] - 3)
-    # Si la curva vota ExpL pero la macro no lo confirma, penalizar
-    if not macro_confirms_expl and score[1] == max(score):
-        score[1] = max(0, score[1] - 2)
-
-    # ── Desempate: en empate, preferir fase más conservadora ────────────────
-    max_score = max(score)
-    top_phases = [i for i, s in enumerate(score) if s == max_score]
-    if len(top_phases) == 1:
-        phase_idx = top_phases[0]
+        signals_vix = (vix_trend_txt, vix_ma25, vix_ma25 - vix_ma200)
+        if vix_panic:                               votes.append((REC_T, 4))
+        elif vix_fear and vix_deteriorating:        votes.append((REC_T, 3)); votes.append((EXP_L, 1))
+        elif vix_deteriorating:                     votes.append((EXP_L, 2)); votes.append((REC_T, 2))
+        else:                                       votes.append((EXP_T, 3)); votes.append((EXP_L, 1))
     else:
-        # En empate: preferir la fase más avanzada del ciclo (más conservadora)
-        # Orden de preferencia en empate: ExpL > RecT > RecL > ExpT
-        preference = [1, 2, 3, 0]  # ExpL primero, ExpT último
-        phase_idx = next(p for p in preference if p in top_phases)
+        signals_vix = ("N/A", None, None)
 
-    return phase_idx, signals, score
+    # ── Calcular grados ───────────────────────────────────────────────────────
+    degrees = weighted_circular_mean(votes)
+
+    if degrees < 90:    phase_idx = 0
+    elif degrees < 180: phase_idx = 1
+    elif degrees < 270: phase_idx = 2
+    else:               phase_idx = 3
+
+    # Score legacy para compatibilidad
+    score = [0, 0, 0, 0]
+    score[phase_idx] = 10
+    center = phase_idx * 90 + 45
+    dist = abs(degrees - center)
+    if dist > 30:
+        adjacent = (phase_idx + 1) % 4 if degrees > center else (phase_idx - 1) % 4
+        score[adjacent] = 5
+
+    # ── Signals dict ─────────────────────────────────────────────────────────
+    signals = {
+        "GDP QoQ":      ("▲ Creciendo" if gdp_growing else "▼ Cayendo",   gdp_val,    gdp_chg),
+        "Desempleo":    ("▼ Bajando"   if unemp_falling else "▲ Subiendo", unemp_val,  unemp_chg),
+        "CPI YoY":      ("▲ Alto"      if cpi_high else "✓ Moderado",      cpi_val,    cpi_chg),
+        "Fed Funds":    (fed_txt,                                           fed_val,    fed_yoy),
+        "Curva 10Y-2Y": (curve_txt,                                        spread_val, spread_chg),
+        "10Y Yield":    (y10_txt,                                          y10_val,    y10_chg),
+        "OECD CLI":     (cli_txt,                                          cli_val,    cli_chg),
+        "CFNAI":        (cfnai_txt,                                        cfnai_val,  cfnai_chg),
+        "VIX MA25/200": signals_vix,
+    }
+
+    print(f"   [DEBUG] degrees: {degrees:.1f}° | phase: {PHASE_NAMES[phase_idx]}")
+
+    return phase_idx, signals, score, degrees
 
 
 def get_ema200_weekly(ticker, prices_daily):
@@ -795,7 +785,7 @@ SECTOR_RATE_SENSITIVITY = {
 
 def build_spi_data(prices_daily, macro_results):
     """Construye todos los datos necesarios para la pestaña SPI."""
-    phase_idx, signals, score = detect_cycle_phase(macro_results, prices_daily)
+    phase_idx, signals, score, degrees = detect_cycle_phase(macro_results, prices_daily)
 
     # Determinar entorno de tipos para la columna de sensibilidad
     def get_val(region, name):
@@ -853,11 +843,11 @@ def build_spi_data(prices_daily, macro_results):
             "rate_note":   rate_note,
         })
 
-    return phase_idx, signals, score, sector_data
+    return phase_idx, signals, score, sector_data, degrees
 
 # ── SHEET 3: SPI ──────────────────────────────────────────────────────────────
 
-def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str):
+def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str, degrees=45):
     ws.sheet_view.showGridLines = False
 
     phase_name  = PHASE_NAMES[phase_idx]
@@ -880,13 +870,15 @@ def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str):
     ws["A2"].alignment = left(1)
     ws.row_dimensions[2].height = 22
 
-    # ── Score por fase ──
+    # ── Indicador de grados ──
     ws.merge_cells("A3:M3")
-    score_str = "  Score → " + "  |  ".join(
-        f"{PHASE_NAMES[i]}: {score[i]}{'  ◄ ACTIVA' if i == phase_idx else ''}"
-        for i in range(4)
-    )
-    ws["A3"] = score_str
+    phase_center = phase_idx * 90 + 45
+    dist_to_center = abs(degrees - phase_center)
+    intensity = "central" if dist_to_center < 20 else ("límite" if dist_to_center > 35 else "moderada")
+    deg_str = (f"  {degrees:.1f}°  |  "
+               f"ExpT 0-90° · ExpL 90-180° · RecT 180-270° · RecL 270-360°  |  "
+               f"Posición: {intensity} en {phase_name}")
+    ws["A3"] = deg_str
     ws["A3"].font = fnt(italic=True, color=LIGHT_GRAY, size=8)
     ws["A3"].fill = fill(SECTION_BG); ws["A3"].alignment = left(1)
     ws.row_dimensions[3].height = 13
@@ -1141,11 +1133,11 @@ def send_discord(webhook_url, output_file, phase_idx, score, signals, sector_dat
     phase_name  = PHASE_NAMES[phase_idx]
     phase_emoji = PHASE_EMOJIS[phase_idx]
 
-    # Score compacto
-    score_str = "  ·  ".join(
-        f"**{PHASE_NAMES[i].split()[0]} {PHASE_NAMES[i].split()[1][0]}**: {score[i]}{'◄' if i == phase_idx else ''}"
-        for i in range(4)
-    )
+    # Grados compacto
+    phase_center = phase_idx * 90 + 45
+    dist_to_center = abs(degrees - phase_center)
+    intensity = "central" if dist_to_center < 20 else ("límite" if dist_to_center > 35 else "moderada")
+    score_str = f"**{degrees:.1f}°** — posición {intensity} en {PHASE_NAMES[phase_idx]}"
 
     # Top 3 sectores por peso en fase actual
     top3 = sorted(sector_data, key=lambda x: x["rec_weight"], reverse=True)[:3]
@@ -1245,7 +1237,7 @@ def main():
     macro_data = build_macro_data()
 
     print("🔄 Calculando fase del ciclo SPI...")
-    phase_idx, signals, score, sector_data = build_spi_data(prices, macro_data)
+    phase_idx, signals, score, sector_data, degrees = build_spi_data(prices, macro_data)
     print(f"   → Fase detectada: {PHASE_NAMES[phase_idx]}")
 
     print("📝 Generando Excel...")
@@ -1260,7 +1252,7 @@ def main():
     add_banner_to_sheet(ws2, "banner.png", ws2.max_row)
 
     ws3 = wb.create_sheet("SPI")
-    write_spi_sheet(ws3, phase_idx, signals, score, sector_data, today_str)
+    write_spi_sheet(ws3, phase_idx, signals, score, sector_data, today_str, degrees)
     add_banner_to_sheet(ws3, "banner.png", ws3.max_row)
 
     wb.save(output)
@@ -1296,7 +1288,7 @@ def main():
         title     = f"Market Tracker {today_str} · {PHASE_NAMES[phase_idx]}"
         body_html = build_substack_html(
             narrative, phase_idx, PHASE_NAMES[phase_idx],
-            signals, sector_data, score, today_str
+            signals, sector_data, score, today_str, degrees
         )
         print("   📤 Enviando a Make webhook...")
         send_to_make(make_webhook, title, body_html, today_str, PHASE_NAMES[phase_idx])
@@ -1406,6 +1398,12 @@ def generate_narrative(api_key, advfn_text, phase_name, signals, sector_data, to
     def sig(name):
         s = signals.get(name, (None, None, None))
         return f"{s[1]:.2f}" if s[1] is not None else "N/A"
+
+    gauge_svg = generate_gauge_svg(degrees, phase_name, phase_idx)
+    phase_center = phase_idx * 90 + 45
+    dist_to_center = abs(degrees - phase_center)
+    intensity = "central" if dist_to_center < 20 else ("límite" if dist_to_center > 35 else "moderada")
+    score_str = f"posición {intensity}"
 
     top3 = sorted(sector_data, key=lambda x: x["rec_weight"], reverse=True)[:3]
     top3_str = ", ".join(f"{sd['ticker']} ({sd['rec_weight']*100:.0f}%)" for sd in top3)
@@ -1558,7 +1556,72 @@ def publish_substack(substack_sid, publication_slug, title, body_html, today_str
         return False
 
 
-def build_substack_html(narrative, phase_idx, phase_name, signals, sector_data, score, today_str):
+def generate_gauge_svg(degrees, phase_name, phase_idx):
+    """Genera un SVG de gauge semicircular para el newsletter."""
+    import math
+
+    # Colores por fase
+    phase_colors = ["#27AE60", "#F39C12", "#E74C3C", "#8E44AD"]
+    color = phase_colors[phase_idx]
+
+    # Convertir grados del ciclo (0-360) a ángulo del gauge semicircular
+    # El gauge va de -180° a 0° (semicírculo superior)
+    # 0° ciclo = -180° gauge (izquierda) | 360° = 0° gauge (derecha)
+    gauge_angle = -180 + (degrees / 360) * 180
+
+    # Posición de la aguja
+    rad = math.radians(gauge_angle)
+    needle_x = 150 + 90 * math.cos(rad)
+    needle_y = 150 + 90 * math.sin(rad)
+
+    # Etiquetas de fases en el arco
+    labels = [
+        (-160, "ExpT", "#27AE60"),
+        (-120, "ExpL", "#F39C12"),
+        (-60,  "RecT", "#E74C3C"),
+        (-20,  "RecL", "#8E44AD"),
+    ]
+
+    label_els = ""
+    for angle, label, lcolor in labels:
+        r = math.radians(angle)
+        lx = 150 + 115 * math.cos(r)
+        ly = 150 + 115 * math.sin(r)
+        label_els += f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="middle" font-size="11" fill="{lcolor}" font-family="Arial" font-weight="bold">{label}</text>\n'
+
+    # Arcos de colores (4 sectores de 45° cada uno en el semicírculo)
+    def arc_path(start_deg, end_deg, r=95):
+        s = math.radians(start_deg)
+        e = math.radians(end_deg)
+        x1 = 150 + r * math.cos(s)
+        y1 = 150 + r * math.sin(s)
+        x2 = 150 + r * math.cos(e)
+        y2 = 150 + r * math.sin(e)
+        return f"M 150 150 L {x1:.1f} {y1:.1f} A {r} {r} 0 0 1 {x2:.1f} {y2:.1f} Z"
+
+    sector_colors = ["#27AE60", "#F39C12", "#E74C3C", "#8E44AD"]
+    sectors = ""
+    for i, sc in enumerate(sector_colors):
+        start = -180 + i * 45
+        end   = -180 + (i + 1) * 45
+        sectors += f'<path d="{arc_path(start, end)}" fill="{sc}" opacity="0.25"/>\n'
+        sectors += f'<path d="{arc_path(start, end, 70)}" fill="white" opacity="1"/>\n'
+
+    svg = f"""<svg width="300" height="160" viewBox="0 0 300 160" xmlns="http://www.w3.org/2000/svg">
+  <rect width="300" height="160" fill="#1C2634" rx="8"/>
+  {sectors}
+  <path d="M 55 150 A 95 95 0 0 1 245 150" fill="none" stroke="#2C3E50" stroke-width="20"/>
+  <path d="M 75 150 A 75 75 0 0 1 225 150" fill="none" stroke="{color}" stroke-width="4" opacity="0.6"/>
+  <line x1="150" y1="150" x2="{needle_x:.1f}" y2="{needle_y:.1f}" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="150" cy="150" r="6" fill="white"/>
+  {label_els}
+  <text x="150" y="145" text-anchor="middle" font-size="13" fill="white" font-family="Arial" font-weight="bold">{degrees:.1f}°</text>
+  <text x="150" y="158" text-anchor="middle" font-size="10" fill="{color}" font-family="Arial">{phase_name}</text>
+</svg>"""
+    return svg
+
+
+def build_substack_html(narrative, phase_idx, phase_name, signals, sector_data, score, today_str, degrees=45):
     """Construye el HTML del post de Substack."""
 
     def sig(name):
@@ -1608,10 +1671,13 @@ def build_substack_html(narrative, phase_idx, phase_name, signals, sector_data, 
     return f"""
 <div style="font-family: Georgia, serif; max-width: 680px; margin: 0 auto; color: #1a1a1a;">
 
-  <div style="background:{phase_color_hex}; color:white; padding:16px 20px; border-radius:8px; margin-bottom:24px;">
-    <div style="font-size:13px; text-transform:uppercase; letter-spacing:1px; opacity:0.85;">Fase del Ciclo · {today_str}</div>
-    <div style="font-size:24px; font-weight:bold; margin-top:4px;">{phase_name.upper()}</div>
-    <div style="font-size:12px; margin-top:8px; opacity:0.8;">{score_str}</div>
+  <div style="background:{phase_color_hex}; color:white; padding:16px 20px; border-radius:8px; margin-bottom:24px; display:flex; align-items:center; gap:20px;">
+    <div style="flex:1;">
+      <div style="font-size:13px; text-transform:uppercase; letter-spacing:1px; opacity:0.85;">Fase del Ciclo · {today_str}</div>
+      <div style="font-size:24px; font-weight:bold; margin-top:4px;">{phase_name.upper()}</div>
+      <div style="font-size:12px; margin-top:8px; opacity:0.8;">{degrees:.1f}° — {score_str}</div>
+    </div>
+    <div>{gauge_svg}</div>
   </div>
 
   {narrative_html}
