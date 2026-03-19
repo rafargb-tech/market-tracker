@@ -541,10 +541,18 @@ def detect_cycle_phase(macro_results, prices_daily=None):
                     return val, chg_last
         return None, None
 
+    def get_val_yoy(region, name):
+        for r, indicators in macro_results.items():
+            for n, unit, val, chg_last, chg_yoy, note in indicators:
+                if n == name:
+                    return val, chg_yoy
+        return None, None
+
     gdp_val,    gdp_chg    = get_val("UNITED STATES", "GDP Growth QoQ")
     unemp_val,  unemp_chg  = get_val("UNITED STATES", "Unemployment Rate")
     cpi_val,    cpi_chg    = get_val("UNITED STATES", "CPI YoY")
     fed_val,    fed_chg    = get_val("UNITED STATES", "Fed Funds Rate")
+    _, fed_yoy             = get_val_yoy("UNITED STATES", "Fed Funds Rate")
     spread_val, spread_chg = get_val("US YIELD CURVE", "10Y - 2Y")
     y10_val,    y10_chg    = get_val("US YIELD CURVE", "US 10Y Yield")
     cli_val,    cli_chg    = get_val("UNITED STATES", "OECD CLI")
@@ -558,9 +566,11 @@ def detect_cycle_phase(macro_results, prices_daily=None):
     unemp_high     = unemp_val is not None and unemp_val > 5.0
     cpi_high       = cpi_val   is not None and cpi_val   > 3.0
     cpi_rising     = cpi_chg   is not None and cpi_chg   > 0
-    rates_rising   = fed_chg   is not None and fed_chg   > 0
-    rates_falling  = fed_chg   is not None and fed_chg   < 0
-    rates_high     = fed_val   is not None and fed_val   > 4.0
+    # Señales Fed — usar tendencia 12 meses para evitar ruido de pausa
+    rates_rising   = fed_yoy  is not None and fed_yoy  > 0.25   # subió >25bps en 12m
+    rates_falling  = fed_yoy  is not None and fed_yoy  < -0.25  # bajó >25bps en 12m
+    rates_stable   = not rates_rising and not rates_falling       # en pausa
+    rates_high     = fed_val  is not None and fed_val  > 4.0
 
     # CLI y CFNAI
     cli_expanding  = cli_val  is not None and cli_val  > 100        # CLI sobre 100 → expansión
@@ -610,7 +620,7 @@ def detect_cycle_phase(macro_results, prices_daily=None):
         "GDP QoQ":      ("▲ Creciendo" if gdp_growing  else "▼ Cayendo",   gdp_val,    gdp_chg),
         "Desempleo":    ("▼ Bajando"   if unemp_falling else "▲ Subiendo",  unemp_val,  unemp_chg),
         "CPI YoY":      ("▲ Alto"      if cpi_high      else "✓ Moderado",  cpi_val,    cpi_chg),
-        "Fed Funds":    ("▲ Subiendo"  if rates_rising  else ("▼ Bajando"   if rates_falling else "→ Estable"), fed_val, fed_chg),
+        "Fed Funds":    ("▲ Subiendo"  if rates_rising  else ("▼ Bajando"   if rates_falling else "→ Pausa"), fed_val, fed_yoy),
         "Curva 10Y-2Y": (curve_txt,    spread_val,  spread_chg),
         "10Y Yield":    (y10_txt,      y10_val,     y10_chg),
         "OECD CLI":     (cli_txt,      cli_val,     cli_chg),
@@ -635,8 +645,10 @@ def detect_cycle_phase(macro_results, prices_daily=None):
     if unemp_falling:  score[0] += 1
     if unemp_rising:   score[2] += 1; score[3] += 1
     if cpi_high:       score[1] += 1; score[2] += 1
-    if rates_rising:   score[1] += 1
-    if rates_falling:  score[3] += 1; score[0] += 1
+    if rates_rising:                                      score[1] += 1   # Fed subiendo → ExpL
+    if rates_falling and (unemp_high or not gdp_growing): score[3] += 1   # Fed baja con debilidad → RecL
+    if rates_falling and gdp_growing and not unemp_high:  score[0] += 1   # Fed baja con economía sana → ExpT
+    if rates_high:                                        score[1] += 1   # Tipos altos → compatible ExpL
 
     # Señales de curva (peso 2 — indicador adelantado)
     if curve_steep:                        score[0] += 2   # empinada genuina → ExpT fuerte
