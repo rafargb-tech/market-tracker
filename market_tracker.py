@@ -257,6 +257,52 @@ def get_fred_series(series_id):
         print(f"     ⚠️  FRED {series_id}: {e} — sin caché disponible")
         return None, None, None
 
+# ── Historial SPI diario ──────────────────────────────────────────────────────
+SPI_HISTORY_FILE = "spi_history.json"
+
+def save_spi_history(today_str, degrees, phase_idx, signals):
+    """Guarda los datos del día en el historial SPI."""
+    import json, os
+
+    def sv(name):
+        s = signals.get(name, (None, None, None))
+        return round(s[1], 4) if s[1] is not None else None
+
+    record = {
+        "degrees":  round(degrees, 2),
+        "phase":    PHASE_NAMES[phase_idx],
+        "gdp":      sv("GDP QoQ"),
+        "unemp":    sv("Desempleo"),
+        "cpi":      sv("CPI YoY"),
+        "fed":      sv("Fed Funds"),
+        "curva":    sv("Curva 10Y-2Y"),
+        "y10":      sv("10Y Yield"),
+        "cli":      sv("OECD CLI"),
+        "cfnai":    sv("CFNAI"),
+        "vix_ma25": sv("VIX MA25/200"),
+    }
+
+    # Cargar historial existente
+    history = {}
+    if os.path.exists(SPI_HISTORY_FILE):
+        try:
+            with open(SPI_HISTORY_FILE) as f:
+                history = json.load(f)
+        except Exception:
+            history = {}
+
+    history[today_str] = record
+
+    # Guardar ordenado por fecha
+    history = dict(sorted(history.items(), reverse=True))
+    try:
+        with open(SPI_HISTORY_FILE, "w") as f:
+            json.dump(history, f, indent=2, ensure_ascii=False)
+        print(f"   📅 Historial SPI guardado ({len(history)} días)")
+    except Exception as e:
+        print(f"   ⚠️  Error guardando historial: {e}")
+
+
 def get_yf_macro(ticker):
     try:
         df = yf.download(ticker, period="2y", auto_adjust=True, progress=False)
@@ -1239,6 +1285,7 @@ def main():
     print("🔄 Calculando fase del ciclo SPI...")
     phase_idx, signals, score, sector_data, degrees = build_spi_data(prices, macro_data)
     print(f"   → Fase detectada: {PHASE_NAMES[phase_idx]}")
+    save_spi_history(today_str, degrees, phase_idx, signals)
 
     print("📝 Generando Excel...")
     wb  = openpyxl.Workbook()
