@@ -1469,28 +1469,37 @@ def generate_narrative(api_key, advfn_text, phase_name, signals, sector_data, to
         f"Usa el contenido encontrado para contextualizar la narrativa con los eventos reales del día."
     )
 
-    system_prompt = """Eres el autor de un newsletter de inversión en español llamado 'Market Tracker'.
-Tu estilo es profesional pero cercano, directo y sin jerga innecesaria.
-Escribes para inversores particulares con conocimientos intermedios-avanzados.
-No usas bullet points ni listas — escribes en prosa fluida.
-Nunca das recomendaciones de compra/venta explícitas — das contexto y perspectiva."""
+    system_prompt = """Eres el autor de un newsletter diario de inversión en español llamado 'Market Tracker'.
+
+ESTILO OBLIGATORIO:
+- Prosa fluida, sin bullet points, sin listas, sin guiones largos (—)
+- Párrafos separados por una línea en blanco, sin más
+- Tono directo y periodístico, como un analista que habla con un colega
+- Sin frases de relleno como "es importante destacar" o "cabe mencionar"
+- Sin jerga excesiva ni tecnicismos innecesarios
+- Nunca recomendaciones explícitas de compra o venta
+
+ESTRUCTURA DEL TEXTO:
+Párrafo 1: Lo que ha pasado hoy en los mercados (basado en las fuentes externas). Hechos concretos, movimientos reales, contexto geopolítico o económico del día.
+Párrafo 2: Cómo conecta ese contexto con el ciclo económico actual y los indicadores macro del Tracker.
+Párrafo 3: Una reflexión sobre qué implica todo esto para el posicionamiento de medio plazo, sin centrarse solo en los sectores del SPI.
+Párrafo 4 (opcional): Algo a vigilar en los próximos días — un dato, una reunión, un riesgo concreto.
+
+IMPORTANTE: El texto debe sentirse vivo y anclado al día real, no genérico. Si hay noticias relevantes úsalas. Evita repetir siempre los mismos sectores o la misma estructura."""
 
     user_prompt = f"""Fecha: {today_str}
 
-DATOS DEL TRACKER:
-- Fase del ciclo económico detectada: {phase_name}
-- Sectores con mayor peso en esta fase: {top3_str}
+DATOS DEL TRACKER HOY:
+- Fase del ciclo: {phase_name} ({degrees:.1f}°)
 - Indicadores macro: {macro_context}
+- Sectores con mayor peso en fase actual: {top3_str}
 
-{advfn_section}
+FUENTES A CONSULTAR (en orden de preferencia):
+1. ADVFN briefing del día: https://www.advfn.com/world-daily-market-briefing/{today_str}
+2. Edward Jones Daily Recap: https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/daily-market-recap
+3. Reuters, Bloomberg o MarketWatch para completar si las anteriores no tienen suficiente contenido.
 
-Escribe la introducción del newsletter diario. Debe:
-1. Abrir con una frase que capture el estado del mercado hoy (usa el briefing ADVFN si está disponible)
-2. Conectar el contexto de mercado con la fase del ciclo detectada ({phase_name})
-3. Mencionar brevemente qué implica esto para los sectores recomendados
-4. Cerrar con una frase que invite al lector a revisar el análisis completo y el Excel adjunto
-
-Longitud: 3-4 párrafos. Tono: analítico, sin alarmismo, con perspectiva de medio plazo."""
+Escribe el texto introductorio del newsletter. 3-4 párrafos en prosa. Sin guiones largos. Sin listas. Sin bullet points. Cada párrafo separado solo por una línea en blanco."""
 
     try:
         payload = json.dumps({
@@ -1522,8 +1531,11 @@ Longitud: 3-4 párrafos. Tono: analítico, sin alarmismo, con perspectiva de med
         if not text_blocks:
             return None
         text = "\n\n".join(text_blocks)
-        # Limpiar marcadores de citas web [1], [2] etc. y saltos de línea excesivos
+        # Limpiar citas, guiones largos y formato markdown
         text = re.sub(r"\[\d+\]", "", text)
+        text = text.replace("\u2014", ",").replace("\u2013", ",")
+        text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+        text = re.sub(r"\*(.*?)\*", r"\1", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
         text = re.sub(r" {2,}", " ", text)
         return text.strip()
