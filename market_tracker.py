@@ -673,14 +673,15 @@ def detect_cycle_phase(macro_results, prices_daily=None):
         elif gdp_val > -1.0:    votes.append((REC_T, 4)); votes.append((REC_L, 4))
         else:                   votes.append((REC_T, 6)); votes.append((REC_L, 2))
 
-    # Desempleo (peso 7)
+    # Desempleo (peso 7) — gradación por magnitud del cambio
     if unemp_chg is not None:
-        if unemp_chg < -0.1:                            votes.append((EXP_T, 7))
-        elif unemp_chg < 0:                             votes.append((EXP_T, 4)); votes.append((EXP_L, 3))
-        elif unemp_chg < 0.1:                           votes.append((EXP_L, 4)); votes.append((REC_T, 3))
-        elif not unemp_high:                            votes.append((REC_T, 4)); votes.append((EXP_L, 3))
-        elif unemp_high and rates_falling:              votes.append((REC_L, 5)); votes.append((REC_T, 2))
-        else:                                           votes.append((REC_T, 4)); votes.append((REC_L, 3))
+        if unemp_chg < -0.2:                            votes.append((EXP_T, 7))             # bajada fuerte → ExpT clara
+        elif unemp_chg < -0.05:                         votes.append((EXP_T, 4)); votes.append((EXP_L, 3))  # bajada moderada
+        elif unemp_chg < 0.05:                          votes.append((EXP_L, 4)); votes.append((EXP_T, 2)); votes.append((REC_T, 1))  # casi estable → neutro
+        elif unemp_chg < 0.15:                          votes.append((EXP_L, 3)); votes.append((REC_T, 4))  # subida leve
+        elif not unemp_high:                            votes.append((REC_T, 5)); votes.append((EXP_L, 2))  # subida moderada
+        elif unemp_high and rates_falling:              votes.append((REC_L, 5)); votes.append((REC_T, 2))  # alto y Fed baja → RecL
+        else:                                           votes.append((REC_T, 4)); votes.append((REC_L, 3))  # alto y subiendo → RecT
 
     # CPI (peso 6)
     if cpi_val is not None:
