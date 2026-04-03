@@ -1284,6 +1284,31 @@ def main():
 
     print("🔄 Calculando fase del ciclo SPI...")
     phase_idx, signals, score, sector_data, degrees = build_spi_data(prices, macro_data)
+    # Verificar calidad de datos — si faltan indicadores críticos usar historial
+    critical = ["GDP QoQ", "CPI YoY", "Fed Funds", "Desempleo"]
+    missing = [k for k in critical if signals.get(k, (None, None, None))[1] is None]
+    if len(missing) >= 2:
+        print(f"   ⚠️  Faltan datos críticos: {missing} — intentando usar historial")
+        try:
+            import json, os
+            if os.path.exists(SPI_HISTORY_FILE):
+                with open(SPI_HISTORY_FILE) as f_hist:
+                    hist = json.load(f_hist)
+                if hist:
+                    last_date = list(hist.keys())[0]
+                    last = hist[last_date]
+                    print(f"   📅 Usando datos del {last_date}: {last['degrees']}° {last['phase']}")
+                    phase_idx = PHASE_NAMES.index(last["phase"])
+                    degrees   = last["degrees"]
+                    score     = [0, 0, 0, 0]; score[phase_idx] = 10
+                    # Rellenar signals con valores del historial donde falten
+                    for key, hist_key in [("GDP QoQ","gdp"),("CPI YoY","cpi"),
+                                          ("Fed Funds","fed"),("Desempleo","unemp")]:
+                        if signals.get(key,(None,None,None))[1] is None and last.get(hist_key):
+                            signals[key] = (signals.get(key,("N/A",None,None))[0],
+                                           last[hist_key], None)
+        except Exception as e:
+            print(f"   ⚠️  No se pudo usar historial: {e}")
     print(f"   → Fase detectada: {PHASE_NAMES[phase_idx]}")
     save_spi_history(today_str, degrees, phase_idx, signals)
 
