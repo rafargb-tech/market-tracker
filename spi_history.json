@@ -1,10 +1,10 @@
 {
   "03-Apr-26": {
-    "degrees": 71.57,
+    "degrees": 80.84,
     "phase": "Expansión Temprana",
-    "gdp": null,
+    "gdp": 0.7,
     "unemp": 4.3,
-    "cpi": null,
+    "cpi": 2.6646,
     "fed": 3.64,
     "curva": 0.52,
     "y10": 4.33,
