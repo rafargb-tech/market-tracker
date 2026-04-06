@@ -206,15 +206,16 @@ def save_fred_cache(cache):
 _fred_cache = None
 
 def get_fred_series(series_id):
-    """Descarga datos de FRED via API oficial con API key. Si falla, usa caché."""
+    """Descarga datos de FRED via API oficial. 2 intentos con 5s de delay. Si falla, usa caché."""
     global _fred_cache
-    import urllib.request, json, os
+    import urllib.request, json, os, time
 
     if _fred_cache is None:
         _fred_cache = load_fred_cache()
 
     api_key = os.environ.get("FRED_API_KEY", "")
-    try:
+
+    def fetch():
         if api_key:
             url = (f"https://api.stlouisfed.org/fred/series/observations"
                    f"?series_id={series_id}&api_key={api_key}&file_type=json"
@@ -225,7 +226,7 @@ def get_fred_series(series_id):
             obs = [o for o in data.get("observations", []) if o["value"] not in (".", "")]
             if not obs:
                 raise ValueError("No observations")
-            vals = [float(o["value"]) for o in reversed(obs)]
+            return [float(o["value"]) for o in reversed(obs)]
         else:
             url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -239,23 +240,30 @@ def get_fred_series(series_id):
                     except ValueError: pass
             if not vals:
                 raise ValueError("No data")
+            return vals
 
-        latest   = vals[-1]
-        chg_last = vals[-1] - vals[-2]  if len(vals) > 1  else None
-        chg_yoy  = vals[-1] - vals[-13] if len(vals) > 13 else None
-        # Guardar en caché
-        _fred_cache[series_id] = [latest, chg_last, chg_yoy]
-        save_fred_cache(_fred_cache)
-        return latest, chg_last, chg_yoy
+    last_error = None
+    for attempt in range(2):
+        try:
+            vals = fetch()
+            latest   = vals[-1]
+            chg_last = vals[-1] - vals[-2]  if len(vals) > 1  else None
+            chg_yoy  = vals[-1] - vals[-13] if len(vals) > 13 else None
+            _fred_cache[series_id] = [latest, chg_last, chg_yoy]
+            save_fred_cache(_fred_cache)
+            return latest, chg_last, chg_yoy
+        except Exception as e:
+            last_error = e
+            if attempt == 0:
+                time.sleep(5)
 
-    except Exception as e:
-        # Intentar caché
-        if series_id in _fred_cache:
-            cached = _fred_cache[series_id]
-            print(f"     ⚠️  FRED {series_id} falla ({e}) — usando caché: {cached[0]}")
-            return tuple(cached)
-        print(f"     ⚠️  FRED {series_id}: {e} — sin caché disponible")
-        return None, None, None
+    if series_id in _fred_cache:
+        cached = _fred_cache[series_id]
+        print(f"     \u26a0\ufe0f  FRED {series_id} falla ({last_error}) \u2014 usando cach\xe9: {cached[0]}")
+        return tuple(cached)
+    print(f"     \u26a0\ufe0f  FRED {series_id}: {last_error} \u2014 sin cach\xe9 disponible")
+    return None, None, None
+
 
 # ── Historial SPI diario ──────────────────────────────────────────────────────
 SPI_HISTORY_FILE = "spi_history.json"
