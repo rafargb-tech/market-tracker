@@ -1,4 +1,17 @@
 {
+  "24-Apr-26": {
+    "degrees": 103.57,
+    "phase": "Expansión Tardía",
+    "gdp": 0.5,
+    "unemp": 4.3,
+    "cpi": 3.3202,
+    "fed": 3.64,
+    "curva": 0.51,
+    "y10": 4.3,
+    "cli": 99.8541,
+    "cfnai": -0.2,
+    "vix_ma25": 22.5704
+  },
   "23-Apr-26": {
     "degrees": 103.57,
     "phase": "Expansión Tardía",
