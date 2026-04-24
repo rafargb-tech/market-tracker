@@ -670,99 +670,112 @@ def detect_cycle_phase(macro_results, prices_daily=None):
     cfnai_txt = ("▲ Sólido" if cfnai_positive else ("⚠ Recesión" if cfnai_recession else "→ Débil")) if cfnai_val is not None else "N/A"
     fed_txt = "▲ Subiendo" if rates_rising else ("▼ Bajando" if rates_falling else "→ Pausa")
 
-    # ── VOTOS ─────────────────────────────────────────────────────────────────
+    # ── VOTOS CON INTERPOLACIÓN CONTINUA ────────────────────────────────────
+    # Cada indicador emite un voto con ángulo interpolado + peso proporcional
+    # Ángulos: ExpT=45° | ExpL=135° | RecT=225° | RecL=315°
     votes = []
 
-    # GDP (peso 8)
+    def interp(val, x0, x1, a0, a1, w0, w1):
+        """Interpola ángulo y peso entre dos extremos según valor."""
+        t = max(0.0, min(1.0, (val - x0) / (x1 - x0))) if x1 != x0 else 0.5
+        angle = a0 + t * (a1 - a0)
+        weight = w0 + t * (w1 - w0)
+        return angle, weight
+
+    # GDP (peso máx 8) — interpolación continua entre -3% y +4%
     if gdp_val is not None:
-        if gdp_val > 3.0:       votes.append((EXP_T, 8))
-        elif gdp_val > 1.5:     votes.append((EXP_T, 5)); votes.append((EXP_L, 3))
-        elif gdp_val > 0:       votes.append((EXP_L, 5)); votes.append((EXP_T, 3))
-        elif gdp_val > -1.0:    votes.append((REC_T, 4)); votes.append((REC_L, 4))
-        else:                   votes.append((REC_T, 6)); votes.append((REC_L, 2))
+        if gdp_val >= 0:
+            # 0% → ExpL(135°,5) | 4% → ExpT(45°,8)
+            a, w = interp(gdp_val, 0, 4, 135, 45, 5, 8)
+        else:
+            # -3% → RecT(225°,8) | 0% → frontera RecT/ExpL(180°,5)
+            a, w = interp(gdp_val, -3, 0, 225, 180, 8, 5)
+        votes.append((a, w))
 
-    # Desempleo (peso 7) — gradación por magnitud del cambio
+    # Desempleo (peso máx 7) — basado en cambio mensual
     if unemp_chg is not None:
-        if unemp_chg < -0.2:                            votes.append((EXP_T, 7))             # bajada fuerte → ExpT clara
-        elif unemp_chg < -0.05:                         votes.append((EXP_T, 4)); votes.append((EXP_L, 3))  # bajada moderada
-        elif unemp_chg < 0.05:                          votes.append((EXP_L, 4)); votes.append((EXP_T, 2)); votes.append((REC_T, 1))  # casi estable → neutro
-        elif unemp_chg < 0.15:                          votes.append((EXP_L, 3)); votes.append((REC_T, 4))  # subida leve
-        elif not unemp_high:                            votes.append((REC_T, 5)); votes.append((EXP_L, 2))  # subida moderada
-        elif unemp_high and rates_falling:              votes.append((REC_L, 5)); votes.append((REC_T, 2))  # alto y Fed baja → RecL
-        else:                                           votes.append((REC_T, 4)); votes.append((REC_L, 3))  # alto y subiendo → RecT
+        # -0.3 → ExpT(45°,7) | 0 → neutro ExpL(135°,3) | +0.3 → RecT(225°,6)
+        if unemp_chg <= 0:
+            a, w = interp(unemp_chg, -0.3, 0, 45, 135, 7, 3)
+        else:
+            a, w = interp(unemp_chg, 0, 0.3, 135, 225, 3, 6)
+            if unemp_high:
+                a = min(a + 30, 270)  # empuja hacia RecL si desempleo alto
+                w = min(w + 1, 7)
+        votes.append((a, w))
 
-    # CPI (peso 6)
+    # CPI (peso máx 6) — interpolación continua
     if cpi_val is not None:
-        if cpi_val > 5.0:       votes.append((REC_T, 6))
-        elif cpi_val > 3.0:     votes.append((EXP_L, 4)); votes.append((REC_T, 2))
-        elif cpi_val > 2.0:     votes.append((EXP_L, 3)); votes.append((EXP_T, 3))
-        elif cpi_val > 1.0:     votes.append((EXP_T, 3)); votes.append((REC_L, 3))
-        else:                   votes.append((REC_L, 5)); votes.append((EXP_T, 1))
+        # 1% → RecL(315°,4) | 2.5% → neutro ExpL(135°,3) | 5% → RecT(225°,6)
+        if cpi_val <= 2.5:
+            a, w = interp(cpi_val, 1.0, 2.5, 315, 135, 4, 3)
+        else:
+            a, w = interp(cpi_val, 2.5, 5.0, 135, 225, 3, 6)
+        votes.append((a, w))
 
-    # Fed (peso 6)
-    if fed_val is not None:
-        if rates_rising:                                        votes.append((EXP_L, 6))
-        elif rates_falling and not gdp_growing and unemp_high: votes.append((REC_L, 6))
-        elif rates_falling and gdp_growing:                     votes.append((EXP_T, 4)); votes.append((REC_L, 2))
-        elif rates_falling:                                     votes.append((REC_L, 4)); votes.append((REC_T, 2))
-        elif rates_high:                                        votes.append((EXP_L, 4)); votes.append((REC_T, 2))
-        else:                                                   votes.append((EXP_L, 4)); votes.append((EXP_T, 2))
+    # Fed Funds (peso máx 6) — basado en tendencia 12 meses
+    if fed_val is not None and fed_yoy is not None:
+        # fed_yoy: -1.5 → RecL(315°,6) | 0 → ExpL(135°,4) | +1.5 → ExpL(135°,6)
+        if fed_yoy >= 0:
+            a, w = interp(fed_yoy, 0, 1.5, 135, 135, 4, 6)
+            # tipos altos en pausa → más hacia RecT
+            if rates_high and abs(fed_yoy) < 0.25:
+                a = 160; w = 5
+        else:
+            # bajando: si economía sana → ExpT, si débil → RecL
+            if gdp_growing and not unemp_high:
+                a, w = interp(fed_yoy, -1.5, 0, 45, 135, 5, 4)
+            else:
+                a, w = interp(fed_yoy, -1.5, 0, 315, 180, 6, 4)
+        votes.append((a, w))
 
-    # Curva 10Y-2Y (peso 7)
+    # Curva 10Y-2Y (peso máx 7) — interpolación continua
     if spread_val is not None:
-        if spread_val > 1.5:    votes.append((EXP_T, 7))
-        elif spread_val > 0.8:  votes.append((EXP_T, 4)); votes.append((EXP_L, 3))
-        elif spread_val > 0.3:  votes.append((EXP_L, 4)); votes.append((EXP_T, 3))
-        elif spread_val > 0:    votes.append((EXP_L, 4)); votes.append((REC_T, 3))
-        elif spread_val > -0.5: votes.append((REC_T, 5)); votes.append((EXP_L, 2))
-        else:                   votes.append((REC_T, 5)); votes.append((REC_L, 2))
+        # -1.0 → RecT(225°,7) | 0 → frontera ExpL/RecT(180°,5) | 1.5 → ExpT(45°,7)
+        if spread_val >= 0:
+            a, w = interp(spread_val, 0, 1.5, 180, 45, 5, 7)
+        else:
+            a, w = interp(spread_val, -1.0, 0, 225, 180, 7, 5)
+        votes.append((a, w))
 
-    # OECD CLI (peso 8)
+    # OECD CLI (peso máx 8) — interpolación continua alrededor de 100
     if cli_val is not None:
-        if cli_val > 101.0:     votes.append((EXP_T, 8))
-        elif cli_val > 100.2:   votes.append((EXP_T, 5)); votes.append((EXP_L, 3))
-        elif cli_val > 99.5:    votes.append((EXP_L, 4)); votes.append((EXP_T, 4))
-        elif cli_val > 98.5:    votes.append((REC_T, 4)); votes.append((EXP_L, 4))
-        elif cli_val > 97.0:    votes.append((REC_T, 6)); votes.append((REC_L, 2))
-        else:                   votes.append((REC_T, 5)); votes.append((REC_L, 3))
+        # 97 → RecT(225°,8) | 100 → neutro(157°,4) | 103 → ExpT(45°,8)
+        if cli_val >= 100:
+            a, w = interp(cli_val, 100, 103, 157, 45, 4, 8)
+        else:
+            a, w = interp(cli_val, 97, 100, 225, 157, 8, 4)
+        votes.append((a, w))
 
-    # CFNAI (peso 5)
+    # CFNAI (peso máx 5) — interpolación continua
     if cfnai_val is not None:
-        if cfnai_val > 0.5:     votes.append((EXP_T, 5))
-        elif cfnai_val > 0.1:   votes.append((EXP_T, 3)); votes.append((EXP_L, 2))
-        elif cfnai_val > -0.1:  votes.append((EXP_L, 3)); votes.append((REC_T, 2))
-        elif cfnai_val > -0.7:  votes.append((REC_T, 3)); votes.append((REC_L, 2))
-        else:                   votes.append((REC_T, 3)); votes.append((REC_L, 2))
+        # -1.0 → RecT(225°,5) | 0 → ExpL(135°,3) | +1.0 → ExpT(45°,5)
+        if cfnai_val >= 0:
+            a, w = interp(cfnai_val, 0, 1.0, 135, 45, 3, 5)
+        else:
+            a, w = interp(cfnai_val, -1.0, 0, 225, 135, 5, 3)
+        votes.append((a, w))
 
-    # VIX MA25/200 (peso 4)
-    vix_ma25 = vix_ma200 = None
-    try:
-        vix_df = yf.download("^VIX", period="2y", auto_adjust=True, progress=False)
-        if not vix_df.empty:
-            vix_series = vix_df["Close"].dropna()
-            if hasattr(vix_series, "columns"):
-                vix_series = vix_series.iloc[:, 0]
-            if len(vix_series) >= 200:
-                vix_ma25  = float(vix_series.rolling(25).mean().iloc[-1])
-                vix_ma200 = float(vix_series.rolling(200).mean().iloc[-1])
-    except Exception:
-        pass
-
-    vix_deteriorating = vix_ma25 is not None and vix_ma200 is not None and vix_ma25 > vix_ma200
-    vix_improving     = vix_ma25 is not None and vix_ma200 is not None and vix_ma25 < vix_ma200
-    vix_fear          = vix_ma25 is not None and vix_ma25 > 25
-    vix_panic         = vix_ma25 is not None and vix_ma25 > 35
-
+    # VIX MA25/200 (peso máx 4) — interpolación continua por nivel y tendencia
     if vix_ma25 is not None and vix_ma200 is not None:
         vix_trend_txt = "↑ Deteriorando" if vix_deteriorating else "↓ Mejorando"
         signals_vix = (vix_trend_txt, vix_ma25, vix_ma25 - vix_ma200)
-        if vix_panic:                               votes.append((REC_T, 4))
-        elif vix_fear and vix_deteriorating:        votes.append((REC_T, 3)); votes.append((EXP_L, 1))
-        elif vix_deteriorating:                     votes.append((EXP_L, 2)); votes.append((REC_T, 2))
-        else:                                       votes.append((EXP_T, 3)); votes.append((EXP_L, 1))
+
+        # Nivel: 12 → ExpT(45°,2) | 20 → ExpL(135°,3) | 30 → RecT(225°,4) | 40 → RecT(225°,4)
+        if vix_ma25 <= 20:
+            a_level, w_level = interp(vix_ma25, 12, 20, 45, 135, 2, 3)
+        elif vix_ma25 <= 30:
+            a_level, w_level = interp(vix_ma25, 20, 30, 135, 225, 3, 4)
+        else:
+            a_level, w_level = 225, 4
+
+        # Tendencia: ajuste adicional según MA25 vs MA200
+        diff = vix_ma25 - vix_ma200
+        trend_adj = max(-15, min(15, diff * 3))  # máx ±15° por tendencia
+        a_final = max(45, min(270, a_level + trend_adj))
+        votes.append((a_final, w_level))
     else:
         signals_vix = ("N/A", None, None)
-
     # ── Calcular grados ───────────────────────────────────────────────────────
     degrees = weighted_circular_mean(votes)
 
