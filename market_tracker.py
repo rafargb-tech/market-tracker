@@ -757,6 +757,22 @@ def detect_cycle_phase(macro_results, prices_daily=None):
         votes.append((a, w))
 
     # VIX MA25/200 (peso máx 4) — interpolación continua por nivel y tendencia
+    vix_ma25 = vix_ma200 = None
+    try:
+        vix_df = yf.download("^VIX", period="2y", auto_adjust=True, progress=False)
+        if not vix_df.empty:
+            vix_series = vix_df["Close"].dropna()
+            if hasattr(vix_series, "columns"):
+                vix_series = vix_series.iloc[:, 0]
+            if len(vix_series) >= 200:
+                vix_ma25  = float(vix_series.rolling(25).mean().iloc[-1])
+                vix_ma200 = float(vix_series.rolling(200).mean().iloc[-1])
+    except Exception:
+        pass
+
+    vix_deteriorating = vix_ma25 is not None and vix_ma200 is not None and vix_ma25 > vix_ma200
+    vix_improving     = vix_ma25 is not None and vix_ma200 is not None and vix_ma25 < vix_ma200
+
     if vix_ma25 is not None and vix_ma200 is not None:
         vix_trend_txt = "↑ Deteriorando" if vix_deteriorating else "↓ Mejorando"
         signals_vix = (vix_trend_txt, vix_ma25, vix_ma25 - vix_ma200)
