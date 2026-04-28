@@ -1369,6 +1369,14 @@ def main():
     print(f"\n✅ Guardado: {output}")
     print(f"   Pestaña 1 → Markets  |  Pestaña 2 → Macro  |  Pestaña 3 → SPI ({PHASE_NAMES[phase_idx]})")
 
+    # ── Subir a Gumroad ──
+    gumroad_key = os.environ.get("GUMROAD_API_KEY", "")
+    if gumroad_key:
+        print("\n📦 Subiendo a Gumroad...")
+        upload_to_gumroad(gumroad_key, "market_tracker", output, today_str)
+    else:
+        print("\n⚠️  GUMROAD_API_KEY no configurada")
+
     print("\n📣 Enviando a Discord...")
     import os
     webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
@@ -1407,6 +1415,61 @@ def main():
 
 
 # ── ADVFN + CLAUDE NARRATIVA + SUBSTACK ───────────────────────────────────────
+
+def upload_to_gumroad(api_key, product_id, excel_path, today_str):
+    """Actualiza el archivo del producto en Gumroad con el Excel del día."""
+    import urllib.request, urllib.parse, json, os
+
+    try:
+        # 1. Obtener el producto para verificar que existe
+        req = urllib.request.Request(
+            f"https://api.gumroad.com/v2/products/{product_id}",
+            headers={"Authorization": f"Bearer {api_key}"}
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read().decode())
+            if not data.get("success"):
+                print(f"   ⚠️  Gumroad: producto no encontrado")
+                return False
+
+        # 2. Subir el nuevo archivo via multipart form
+        boundary = "----MarketTrackerBoundary"
+        with open(excel_path, "rb") as f:
+            file_data = f.read()
+
+        filename = f"Market_Tracker_{today_str}.xlsx"
+
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n"
+        ).encode() + file_data + f"\r\n--{boundary}--\r\n".encode()
+
+        req2 = urllib.request.Request(
+            f"https://api.gumroad.com/v2/products/{product_id}/product_files",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req2, timeout=30) as r2:
+            result = json.loads(r2.read().decode())
+            if result.get("success"):
+                print(f"   ✅ Gumroad actualizado: {filename}")
+                return True
+            else:
+                print(f"   ⚠️  Gumroad error: {result}")
+                return False
+
+    except Exception as e:
+        try:
+            print(f"   ⚠️  Gumroad error: {e.code} — {e.read().decode()[:200]}")
+        except:
+            print(f"   ⚠️  Gumroad error: {e}")
+        return False
+
 
 def send_to_make(webhook_url, title, body_html, today_str, phase_name):
     """Envía los datos del newsletter a Make via webhook."""
