@@ -1304,6 +1304,7 @@ def send_discord(webhook_url, output_file, phase_idx, score, signals, sector_dat
 
 
 def main():
+    import os
     today_str = datetime.today().strftime("%d-%b-%y")
     output    = f"market_tracker_{datetime.today().strftime('%Y%m%d')}.xlsx"
 
