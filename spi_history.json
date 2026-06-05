@@ -480,6 +480,19 @@
     "cfnai": -0.2,
     "vix_ma25": 19.762
   },
+  "05-Jun-26": {
+    "degrees": 129.55,
+    "phase": "Expansión Tardía",
+    "gdp": 1.6,
+    "unemp": 4.3,
+    "cpi": 3.947,
+    "fed": 3.63,
+    "curva": 0.42,
+    "y10": 4.49,
+    "cli": 99.8541,
+    "cfnai": 0.14,
+    "vix_ma25": 16.9688
+  },
   "04-May-26": {
     "degrees": 126.6,
     "phase": "Expansión Tardía",
