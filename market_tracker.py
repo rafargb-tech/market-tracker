@@ -1422,16 +1422,25 @@ def upload_to_gumroad(api_key, product_id, excel_path, today_str):
     import urllib.request, urllib.parse, json, os
 
     try:
-        # 1. Obtener el producto para verificar que existe
-        req = urllib.request.Request(
-            f"https://api.gumroad.com/v2/products/{product_id}",
+        # 1. Listar productos y encontrar el que coincide con el slug
+        req0 = urllib.request.Request(
+            "https://api.gumroad.com/v2/products",
             headers={"Authorization": f"Bearer {api_key}"}
         )
-        with urllib.request.urlopen(req, timeout=15) as r:
-            data = json.loads(r.read().decode())
-            if not data.get("success"):
-                print(f"   ⚠️  Gumroad: producto no encontrado")
-                return False
+        with urllib.request.urlopen(req0, timeout=15) as r0:
+            all_products = json.loads(r0.read().decode())
+
+        real_id = None
+        for p in all_products.get("products", []):
+            if p.get("custom_permalink") == product_id or p.get("id") == product_id:
+                real_id = p.get("id")
+                print(f"   Producto encontrado: {p.get('name')} (id: {real_id})")
+                break
+
+        if not real_id:
+            print(f"   ⚠️  Gumroad: producto '{product_id}' no encontrado")
+            print(f"   Productos disponibles: {[p.get('custom_permalink') or p.get('id') for p in all_products.get('products', [])]}")
+            return False
 
         # 2. Subir el nuevo archivo via multipart form
         boundary = "----MarketTrackerBoundary"
@@ -1447,7 +1456,7 @@ def upload_to_gumroad(api_key, product_id, excel_path, today_str):
         ).encode() + file_data + f"\r\n--{boundary}--\r\n".encode()
 
         req2 = urllib.request.Request(
-            f"https://api.gumroad.com/v2/products/{product_id}/product_files",
+            f"https://api.gumroad.com/v2/products/{real_id}/product_files",
             data=body,
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -1596,38 +1605,46 @@ def generate_narrative(api_key, advfn_text, phase_name, signals, sector_data, to
         f"Usa el contenido encontrado para contextualizar la narrativa con los eventos reales del día."
     )
 
-    system_prompt = """Eres el autor de un newsletter diario de inversión en español llamado 'Market Tracker'.
+    system_prompt = """Eres el autor de un newsletter diario de inversion en espanol llamado Market Tracker. Tu voz es la de un analista experimentado que ha visto suficientes ciclos como para no alarmarse, pero si para saber cuando algo merece atencion. Escribes con ironia contenida, sin convertirte en comico, y con la honestidad de quien no tiene que quedar bien con nadie.
 
 ESTILO OBLIGATORIO:
-- Prosa fluida, sin bullet points, sin listas, sin guiones largos (—)
-- Párrafos separados por una línea en blanco, sin más
-- Tono directo y periodístico, como un analista que habla con un colega
-- Sin frases de relleno como "es importante destacar" o "cabe mencionar"
-- Sin jerga excesiva ni tecnicismos innecesarios
-- Nunca recomendaciones explícitas de compra o venta
+Prosa fluida y densa. Sin bullet points, sin listas, sin guiones largos, usa coma o punto y seguido.
+Parrafos separados por una linea en blanco, sin mas formato.
+Tono directo, con personalidad. Puedes ser ironico cuando la situacion lo merezca, pero nunca frivolo.
+Sin frases de relleno como es importante destacar, cabe mencionar o en este contexto.
+Sin tecnicismos innecesarios, pero sin simplificar en exceso.
+Nunca recomendaciones explicitas de compra o venta.
+Varia la estructura cada dia. No repitas siempre el mismo esquema de parrafos.
 
-ESTRUCTURA DEL TEXTO:
-Párrafo 1: Lo que ha pasado hoy en los mercados (basado en las fuentes externas). Hechos concretos, movimientos reales, contexto geopolítico o económico del día.
-Párrafo 2: Cómo conecta ese contexto con el ciclo económico actual y los indicadores macro del Tracker.
-Párrafo 3: Una reflexión sobre qué implica todo esto para el posicionamiento de medio plazo, sin centrarse solo en los sectores del SPI.
-Párrafo 4 (opcional): Algo a vigilar en los próximos días — un dato, una reunión, un riesgo concreto.
+VOZ Y PERSPECTIVA:
+Habla en primera persona del plural cuando sea natural.
+Cuando algo es contradictorio o absurdo, senalalo con ironia seca, no con exclamaciones.
+Haz referencias globales: Asia, Europa, commodities, divisas, bonos. El mundo no empieza ni termina en el SP500.
+Si hay un dato macro importante, contextualizalo historicamente cuando aporte perspectiva.
+El ciclo SPI es el marco, no el protagonista. Usalo como ancla estructural, no como tema central.
 
-IMPORTANTE: El texto debe sentirse vivo y anclado al día real, no genérico. Si hay noticias relevantes úsalas. Evita repetir siempre los mismos sectores o la misma estructura."""
+COBERTURA OBLIGATORIA rotando enfasis cada dia:
+Mercados globales: movimientos relevantes en Europa, Asia, emergentes, no solo EEUU.
+Commodities: petroleo, oro, materias primas si hay movimiento.
+Divisas: dolar, euro, yen, cuando sean relevantes.
+Macro del dia: datos publicados, reuniones de bancos centrales, geopolitica con impacto economico.
+Ciclo y posicionamiento: solo como cierre o hilo conductor, nunca como apertura obligada.
+
+LONGITUD: 4-5 parrafos sustanciales. Cada uno debe aportar algo distinto."""
 
     user_prompt = f"""Fecha: {today_str}
 
 DATOS DEL TRACKER HOY:
-- Fase del ciclo: {phase_name} ({degrees:.1f}°)
-- Indicadores macro: {macro_context}
-- Sectores con mayor peso en fase actual: {top3_str}
+Fase del ciclo SPI: {phase_name} ({degrees:.1f} grados)
+Macro: {macro_context}
+Sectores con mayor peso en esta fase: {top3_str}
 
-FUENTES A CONSULTAR (en orden de preferencia):
-1. ADVFN briefing del día: https://www.advfn.com/world-daily-market-briefing/{today_str}
-2. Edward Jones Daily Recap: https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/daily-market-recap
-3. Reuters, Bloomberg o MarketWatch para completar si las anteriores no tienen suficiente contenido.
+FUENTES: consulta todas las que puedas antes de escribir.
+ADVFN World Daily Market Briefing: https://www.advfn.com/world-daily-market-briefing/{today_str}
+Edward Jones Daily Recap: https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/daily-market-recap
+Busca tambien en Reuters, Bloomberg, MarketWatch o FT noticias relevantes del dia de hoy.
 
-Escribe el texto introductorio del newsletter. 3-4 párrafos en prosa. Sin guiones largos. Sin listas. Sin bullet points. Cada párrafo separado solo por una línea en blanco."""
-
+Escribe el texto del newsletter. 4-5 parrafos en prosa. Sin guiones largos. Sin listas. Sin bullet points. Con ironia cuando la merezca. Cubriendo mercados globales, no solo EEUU. Cada parrafo separado por una linea en blanco."""
     try:
         payload = json.dumps({
             "model": "claude-sonnet-4-6",
