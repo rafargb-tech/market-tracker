@@ -1588,6 +1588,30 @@ def fetch_market_context(today_str):
     ]
 
     texts = []
+
+    # Buscar agenda económica del día
+    try:
+        import urllib.parse
+        query = urllib.parse.quote(f"economic calendar earnings today {today_str}")
+        agenda_url = f"https://www.marketwatch.com/economy-politics/calendar"
+        req_agenda = urllib.request.Request(agenda_url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        })
+        with urllib.request.urlopen(req_agenda, timeout=10) as r:
+            html_agenda = r.read().decode("utf-8", errors="ignore")
+        html_agenda = re.sub(r'<(script|style|nav|header|footer)[^>]*>.*?</\1>', ' ', html_agenda, flags=re.DOTALL|re.IGNORECASE)
+        paras = re.findall(r'<(?:td|p|li)[^>]*>(.*?)</(?:td|p|li)>', html_agenda, re.DOTALL|re.IGNORECASE)
+        agenda_items = []
+        for p in paras:
+            clean = re.sub(r'<[^>]+>', ' ', p).strip()
+            clean = re.sub(r'\s+', ' ', clean)
+            if 10 < len(clean) < 200:
+                agenda_items.append(clean)
+        if agenda_items:
+            texts.append(f"[AGENDA ECONOMICA HOY]\n" + "\n".join(agenda_items[:20]))
+    except Exception:
+        pass
+
     for url in sources:
         try:
             req = urllib.request.Request(url, headers={
@@ -1649,33 +1673,43 @@ def generate_narrative(api_key, advfn_text, phase_name, signals, sector_data, to
         f"Usa el contenido encontrado para contextualizar la narrativa con los eventos reales del día."
     )
 
-    system_prompt = """Eres el autor de un newsletter diario de inversion en espanol llamado Market Tracker. Tu voz es la de un analista experimentado que ha visto suficientes ciclos como para no alarmarse, pero si para saber cuando algo merece atencion. Escribes con ironia contenida, sin convertirte en comico, y con la honestidad de quien no tiene que quedar bien con nadie.
+    system_prompt = """Eres el autor de un newsletter diario de inversion llamado Market Tracker. Escribes como un analista veterano con criterio propio: alguien que lleva anos viendo ciclos, que sabe cuando un dato importa de verdad y cuando es ruido disfrazado de noticia. Tu ironia no es un recurso decorativo, es tu forma natural de procesar un mundo donde los bancos centrales dicen una cosa, el mercado escucha otra, y ambos suelen equivocarse. No escribes para quedar bien. Escribes para que quien te lea entienda que esta pasando y por que deberia importarle.
 
-ESTILO OBLIGATORIO:
-Prosa fluida y densa. Sin bullet points, sin listas, sin guiones largos, usa coma o punto y seguido.
-Parrafos separados por una linea en blanco, sin mas formato.
-Tono directo, con personalidad. Puedes ser ironico cuando la situacion lo merezca, pero nunca frivolo.
-Sin frases de relleno como es importante destacar, cabe mencionar o en este contexto.
-Sin tecnicismos innecesarios, pero sin simplificar en exceso.
-Nunca recomendaciones explicitas de compra o venta.
-Varia la estructura cada dia. No repitas siempre el mismo esquema de parrafos.
+ESTILO:
+Prosa narrativa densa. Cada parrafo desarrolla una idea con profundidad, no la anuncia y pasa a la siguiente. Las frases cortas son la excepcion, no la norma. Conecta causa y efecto, contexto e implicacion, dato y consecuencia. El lector debe sentir que esta leyendo a alguien que piensa mientras escribe, no a alguien que enumera titulares.
+Sin bullet points, sin listas, sin guiones largos. Punto y seguido o coma cuando la frase necesita respirar.
+Sin muletillas periodisticas del tipo "en un contexto de", "cabe destacar", "es importante senalar". Si algo importa, lo dices directamente.
+Nunca recomendaciones de compra o venta.
 
-VOZ Y PERSPECTIVA:
-Habla en primera persona del plural cuando sea natural.
-Cuando algo es contradictorio o absurdo, senalalo con ironia seca, no con exclamaciones.
-Haz referencias globales: Asia, Europa, commodities, divisas, bonos. El mundo no empieza ni termina en el SP500.
-Si hay un dato macro importante, contextualizalo historicamente cuando aporte perspectiva.
-El ciclo SPI es el marco, no el protagonista. Usalo como ancla estructural, no como tema central.
+IRONIA:
+No es un chiste al final del parrafo. Es la perspectiva desde la que analizas. Cuando la Fed dice que depende de los datos pero lleva seis meses ignorandolos, lo dices. Cuando el mercado celebra un dato macro mediocre como si fuera una victoria, lo notas. Cuando Europa debate si su economia es fragil o catastrofica y elige las dos opciones a la vez, lo describes asi. La ironia emerge del contraste entre lo que se dice y lo que ocurre, entre las expectativas y la realidad.
 
-COBERTURA OBLIGATORIA rotando enfasis cada dia:
-Mercados globales: movimientos relevantes en Europa, Asia, emergentes, no solo EEUU.
-Commodities: petroleo, oro, materias primas si hay movimiento.
-Divisas: dolar, euro, yen, cuando sean relevantes.
-Macro del dia: datos publicados, reuniones de bancos centrales, geopolitica con impacto economico.
-Ciclo y posicionamiento: solo como cierre o hilo conductor, nunca como apertura obligada.
+ESTRUCTURA DEL TEXTO:
+Abre con el hecho mas relevante del dia, relatado con contexto. No "los mercados cayeron" sino por que cayeron, que lo desencadeno y que revela sobre el momento actual.
+Desarrolla dos o tres hilos narrativos conectados: pueden ser la decision de un banco central y su efecto en bonos y divisas, o la tension entre datos macro solidos en EEUU y debilidad en Europa, o el impacto de la geopolitica en commodities y en sectores concretos.
+Incluye siempre la agenda macro pendiente: datos economicos relevantes que se publican hoy o esta semana, earnings importantes, reuniones de bancos centrales. Esto es lo que el lector necesita para saber donde poner la atencion en las proximas horas.
+Cierra con el ciclo SPI como marco interpretativo: donde estamos, que implica para el posicionamiento, que senales vigilar. Debe sentirse como una conclusion, no como un apendice.
 
-LONGITUD: 4-5 parrafos sustanciales. Cada uno debe aportar algo distinto."""
+COBERTURA:
+Mercados globales obligatorios cuando hay movimiento: Europa, Asia, emergentes, no solo SP500.
+Commodities: petroleo y oro siempre que sean relevantes.
+Divisas: dolar, euro, yen cuando el movimiento tenga causa y consecuencia claras.
+Datos macro del dia con contexto historico cuando aporte perspectiva real.
+Earnings relevantes si los hay, con lectura de lo que revelan sobre el ciclo o el sector.
 
+LONGITUD: 5 parrafos sustanciales. Cada uno debe construir sobre el anterior."""
+
+    market_context = advfn_text if advfn_text else ""
+    context_section = f"\nCONTEXTO DE MERCADO DEL DIA:\n{market_context}\n" if market_context else "\nNo hay briefing externo disponible. Usa los datos macro del Tracker y tu conocimiento del contexto actual.\n"
+
+    user_prompt = f"""Fecha: {today_str}
+
+DATOS DEL TRACKER:
+Fase del ciclo SPI: {phase_name} ({degrees:.1f} grados)
+Indicadores macro: {macro_context}
+Sectores con mayor peso en esta fase: {top3_str}
+{context_section}
+Escribe el newsletter. 5 parrafos en prosa narrativa densa. Con ironia integrada cuando la situacion lo merece. Incluyendo agenda macro y earnings pendientes del dia o la semana. Cubriendo mercados globales. Sin listas ni bullets. Cada parrafo separado por una linea en blanco."""
     market_context = advfn_text if advfn_text else ""
     context_section = f"""\nCONTEXTO DE MERCADO DEL DIA (obtenido de fuentes externas):\n{market_context}\n""" if market_context else "\nNo hay briefing externo disponible hoy. Usa los datos macro del Tracker como base.\n"
 
