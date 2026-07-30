@@ -1697,7 +1697,13 @@ Divisas: dolar, euro, yen cuando el movimiento tenga causa y consecuencia claras
 Datos macro del dia con contexto historico cuando aporte perspectiva real.
 Earnings relevantes si los hay, con lectura de lo que revelan sobre el ciclo o el sector.
 
-LONGITUD: 5 parrafos sustanciales. Cada uno debe construir sobre el anterior."""
+LONGITUD: 5 parrafos sustanciales. Cada uno debe construir sobre el anterior.
+
+ERRORES A EVITAR:
+No escribas frases de una sola linea como parrafo independiente. Si algo merece mencion, desarrollalo en el mismo parrafo donde lo introduces.
+No cortes una idea en dos parrafos consecutivos. Si el petroleo y la geopolitica estan relacionados, van juntos.
+No uses "merece una mencion separada" ni similares. Simplemente desarrolla la idea.
+Cada parrafo debe tener minimo 4-5 frases sustanciales."""
 
     market_context = advfn_text if advfn_text else ""
     context_section = f"\nCONTEXTO DE MERCADO DEL DIA:\n{market_context}\n" if market_context else "\nNo hay briefing externo disponible. Usa los datos macro del Tracker y tu conocimiento del contexto actual.\n"
