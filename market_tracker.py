@@ -1387,11 +1387,19 @@ def main():
     date_str      = datetime.today().strftime("%Y-%m-%d")
 
     # 1+2. Narrativa con Claude (busca el briefing del día via web search)
+    # Obtener contexto de mercado antes de llamar a Claude
+    print("   🌐 Obteniendo contexto de mercado...")
+    market_context = fetch_market_context(datetime.today().strftime("%Y-%m-%d"))
+    if market_context:
+        print(f"   ✅ Contexto obtenido ({len(market_context)} chars)")
+    else:
+        print("   ⚠️  Sin contexto externo disponible")
+
     narrative = None
     if anthropic_key:
         print("   🤖 Generando narrativa con Claude...")
         narrative = generate_narrative(
-            anthropic_key, None,
+            anthropic_key, market_context,
             PHASE_NAMES[phase_idx], signals, sector_data, today_str, degrees, phase_idx
         )
         if narrative:
@@ -1570,6 +1578,44 @@ def scrape_advfn(date_str):
         return None
 
 
+def fetch_market_context(today_str):
+    """Obtiene el contexto de mercado del día desde ADVFN y Edward Jones."""
+    import urllib.request, re
+
+    sources = [
+        f"https://www.advfn.com/world-daily-market-briefing/{today_str}",
+        "https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/daily-market-recap",
+    ]
+
+    texts = []
+    for url in sources:
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+            })
+            with urllib.request.urlopen(req, timeout=15) as r:
+                html = r.read().decode("utf-8", errors="ignore")
+
+            # Limpiar HTML
+            html = re.sub(r'<(script|style|nav|header|footer|aside)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL|re.IGNORECASE)
+            paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL|re.IGNORECASE)
+            good = []
+            for p in paragraphs:
+                clean = re.sub(r'<[^>]+>', ' ', p).strip()
+                clean = re.sub(r'\s+', ' ', clean)
+                if len(clean) > 80:
+                    good.append(clean)
+            text = " ".join(good)[:2000]
+            if len(text) > 200:
+                texts.append(f"[{url}]\n{text}")
+        except Exception as e:
+            print(f"   ⚠️  No se pudo obtener {url}: {e}")
+
+    return "\n\n".join(texts) if texts else None
+
+
 def generate_narrative(api_key, advfn_text, phase_name, signals, sector_data, today_str, degrees=135, phase_idx=1):
     """
     Usa Claude API para generar la narrativa del newsletter.
@@ -1630,25 +1676,23 @@ Ciclo y posicionamiento: solo como cierre o hilo conductor, nunca como apertura 
 
 LONGITUD: 4-5 parrafos sustanciales. Cada uno debe aportar algo distinto."""
 
+    market_context = advfn_text if advfn_text else ""
+    context_section = f"""\nCONTEXTO DE MERCADO DEL DIA (obtenido de fuentes externas):\n{market_context}\n""" if market_context else "\nNo hay briefing externo disponible hoy. Usa los datos macro del Tracker como base.\n"
+
     user_prompt = f"""Fecha: {today_str}
 
 DATOS DEL TRACKER HOY:
 Fase del ciclo SPI: {phase_name} ({degrees:.1f} grados)
 Macro: {macro_context}
 Sectores con mayor peso en esta fase: {top3_str}
-
-FUENTES — leelas en este orden:
-1. ADVFN (fuente principal): https://www.advfn.com/world-daily-market-briefing/{today_str}
-2. Edward Jones (complemento): https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/daily-market-recap
-Haz fetch de estas URLs directamente. Solo si falta algo relevante que no aparezca en ellas, haz UNA busqueda adicional concreta.
-
+{context_section}
 Escribe el texto del newsletter. 4-5 parrafos en prosa. Sin guiones largos. Sin listas. Sin bullet points. Con ironia cuando la merezca. Cubriendo mercados globales, no solo EEUU. Cada parrafo separado por una linea en blanco."""
     try:
         payload = json.dumps({
             "model": "claude-sonnet-4-6",
             "max_tokens": 2000,
             "system": system_prompt,
-            "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 1}],
+            # Sin web_search — contexto ya incluido en el prompt
             "messages": [{"role": "user", "content": user_prompt}]
         }).encode("utf-8")
 
