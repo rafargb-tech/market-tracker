@@ -1371,12 +1371,10 @@ def main():
     print(f"   Pestaña 1 → Markets  |  Pestaña 2 → Macro  |  Pestaña 3 → SPI ({PHASE_NAMES[phase_idx]})")
 
     # ── Subir a Gumroad ──
-    gumroad_key = os.environ.get("GUMROAD_API_KEY", "")
-    if gumroad_key:
-        print("\n📦 Subiendo a Gumroad...")
-        upload_to_gumroad(gumroad_key, "market_tracker", output, today_str)
-    else:
-        print("\n⚠️  GUMROAD_API_KEY no configurada")
+    # Gumroad: pendiente de resolver endpoint de subida de archivos via API
+    # gumroad_key = os.environ.get("GUMROAD_API_KEY", "")
+    # if gumroad_key:
+    #     upload_to_gumroad(gumroad_key, "market_tracker", output, today_str)
 
     print("\n📣 Enviando a Discord...")
     import os
@@ -1664,7 +1662,7 @@ Escribe el texto del newsletter. 4-5 parrafos en prosa. Sin guiones largos. Sin 
             },
             method="POST"
         )
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=120) as r:
             data = json.loads(r.read().decode())
         # Extraer y concatenar todos los bloques de texto (ignorar tool_use)
         import re
