@@ -1637,10 +1637,10 @@ Fase del ciclo SPI: {phase_name} ({degrees:.1f} grados)
 Macro: {macro_context}
 Sectores con mayor peso en esta fase: {top3_str}
 
-FUENTES: consulta todas las que puedas antes de escribir.
-ADVFN World Daily Market Briefing: https://www.advfn.com/world-daily-market-briefing/{today_str}
-Edward Jones Daily Recap: https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/daily-market-recap
-Busca tambien en Reuters, Bloomberg, MarketWatch o FT noticias relevantes del dia de hoy.
+FUENTES — leelas en este orden:
+1. ADVFN (fuente principal): https://www.advfn.com/world-daily-market-briefing/{today_str}
+2. Edward Jones (complemento): https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/daily-market-recap
+Haz fetch de estas URLs directamente. Solo si falta algo relevante que no aparezca en ellas, haz UNA busqueda adicional concreta.
 
 Escribe el texto del newsletter. 4-5 parrafos en prosa. Sin guiones largos. Sin listas. Sin bullet points. Con ironia cuando la merezca. Cubriendo mercados globales, no solo EEUU. Cada parrafo separado por una linea en blanco."""
     try:
@@ -1648,7 +1648,7 @@ Escribe el texto del newsletter. 4-5 parrafos en prosa. Sin guiones largos. Sin 
             "model": "claude-sonnet-4-6",
             "max_tokens": 2000,
             "system": system_prompt,
-            "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+            "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 1}],
             "messages": [{"role": "user", "content": user_prompt}]
         }).encode("utf-8")
 
@@ -1662,7 +1662,7 @@ Escribe el texto del newsletter. 4-5 parrafos en prosa. Sin guiones largos. Sin 
             },
             method="POST"
         )
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with urllib.request.urlopen(req, timeout=180) as r:
             data = json.loads(r.read().decode())
         # Extraer y concatenar todos los bloques de texto (ignorar tool_use)
         import re
