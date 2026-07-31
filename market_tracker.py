@@ -1633,6 +1633,7 @@ def fetch_market_context(today_str):
                     good.append(clean)
             text = " ".join(good)[:2000]
             if len(text) > 200:
+                print(f"   \U0001f50d Preview {url[:50]}: {text[:150]!r}")
                 texts.append(f"[{url}]\n{text}")
         except Exception as e:
             print(f"   ⚠️  No se pudo obtener {url}: {e}")
@@ -1708,14 +1709,17 @@ Cada parrafo debe tener minimo 4-5 frases sustanciales."""
     market_context = advfn_text if advfn_text else ""
     context_section = f"\nCONTEXTO DE MERCADO DEL DIA:\n{market_context}\n" if market_context else "\nNo hay briefing externo disponible. Usa los datos macro del Tracker y tu conocimiento del contexto actual.\n"
 
-    user_prompt = f"""Fecha: {today_str}
+    from datetime import datetime as _dt
+    fecha_larga = _dt.today().strftime("%A %d de %B de %Y")
 
-DATOS DEL TRACKER:
+    user_prompt = f"""HOY ES {today_str} ({fecha_larga}). El newsletter es de HOY, no de ayer ni de dias anteriores. Si el contexto externo que recibes contiene eventos de dias anteriores, usalo solo como antecedente pero ancla el texto a lo que esta ocurriendo HOY.
+
+DATOS DEL TRACKER HOY:
 Fase del ciclo SPI: {phase_name} ({degrees:.1f} grados)
 Indicadores macro: {macro_context}
 Sectores con mayor peso en esta fase: {top3_str}
 {context_section}
-Escribe el newsletter. 5 parrafos en prosa narrativa densa. Con ironia integrada cuando la situacion lo merece. Incluyendo agenda macro y earnings pendientes del dia o la semana. Cubriendo mercados globales. Sin listas ni bullets. Cada parrafo separado por una linea en blanco."""
+Escribe el newsletter de HOY ({today_str}). 5 parrafos en prosa narrativa densa. Con ironia integrada cuando la situacion lo merece. Incluyendo agenda macro y earnings pendientes de hoy o esta semana. Cubriendo mercados globales. Sin listas ni bullets. Cada parrafo separado por una linea en blanco."""
     market_context = advfn_text if advfn_text else ""
     context_section = f"""\nCONTEXTO DE MERCADO DEL DIA (obtenido de fuentes externas):\n{market_context}\n""" if market_context else "\nNo hay briefing externo disponible hoy. Usa los datos macro del Tracker como base.\n"
 
