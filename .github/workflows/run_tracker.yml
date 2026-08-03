@@ -1,10 +1,10 @@
 name: Market Tracker Daily
 
 on:
-  workflow_dispatch:        # Disparado por cron-job.org a las 9:30 EDT
+  workflow_dispatch:
 
 permissions:
-  contents: write           # Necesario para hacer push del caché y historial
+  contents: write
 
 jobs:
   run-tracker:
@@ -34,15 +34,29 @@ jobs:
           MAKE_WEBHOOK_URL: ${{ secrets.MAKE_WEBHOOK_URL }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           GUMROAD_API_KEY: ${{ secrets.GUMROAD_API_KEY }}
+          MAKE_ADVFN_URL: ${{ secrets.MAKE_ADVFN_URL }}
 
-      - name: Guardar caché FRED y historial SPI
+      - name: Guardar cache FRED y historial SPI
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
+          git fetch origin main
+          git checkout origin/main -- fred_cache.json spi_history.json 2>/dev/null || true
+          python3 -c "
+          import json, os
+          # Merge spi_history: combinar el del repo con el generado
+          local = {}
+          remote = {}
+          if os.path.exists('spi_history.json'):
+              with open('spi_history.json') as f:
+                  local = json.load(f)
+          merged = {**remote, **local}
+          with open('spi_history.json', 'w') as f:
+              json.dump(merged, f, indent=2)
+          "
           git add fred_cache.json spi_history.json || true
           git diff --cached --quiet || git commit -m "Update FRED cache + SPI history [skip ci]"
-          git pull --rebase origin main || true
-          git push || true
+          git push origin HEAD:main || true
 
       - name: Upload Excel as artifact
         uses: actions/upload-artifact@v4
