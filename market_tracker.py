@@ -1740,7 +1740,7 @@ Fase del ciclo SPI: {phase_name} ({degrees:.1f} grados)
 Indicadores macro: {macro_context}
 Sectores con mayor peso en esta fase: {top3_str}
 {context_section}
-Escribe el newsletter de HOY ({today_str}). 5 parrafos en prosa narrativa densa. Con ironia integrada cuando la situacion lo merece. Incluyendo agenda macro y earnings pendientes de hoy o esta semana. Cubriendo mercados globales. Sin listas ni bullets. Cada parrafo separado por una linea en blanco."""
+Escribe el newsletter de HOY ({today_str}). 5 parrafos en prosa narrativa densa. Cada parrafo debe ser un bloque continuo de texto sin ninguna interrupcion interna. No introduzcas saltos de linea dentro de un parrafo bajo ninguna circunstancia. Con ironia integrada cuando la situacion lo merece. Incluyendo agenda macro y earnings pendientes de hoy o esta semana. Cubriendo mercados globales. Sin listas ni bullets. Cada parrafo separado por UNA linea en blanco."""
     market_context = advfn_text if advfn_text else ""
     context_section = f"""\nCONTEXTO DE MERCADO DEL DIA (obtenido de fuentes externas):\n{market_context}\n""" if market_context else "\nNo hay briefing externo disponible hoy. Usa los datos macro del Tracker como base.\n"
 
@@ -1787,8 +1787,12 @@ Escribe el texto del newsletter. 4-5 parrafos en prosa. Sin guiones largos. Sin 
         text = text.replace("\u2014", ",").replace("\u2013", ",")
         text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
         text = re.sub(r"\*(.*?)\*", r"\1", text)
+        # Eliminar saltos de línea simples dentro de párrafos (conservar dobles)
+        text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
         text = re.sub(r" {2,}", " ", text)
+        # Limpiar espacios antes de comas y puntos
+        text = re.sub(r" ([,.])", r"\1", text)
         return text.strip()
     except Exception as e:
         try:
