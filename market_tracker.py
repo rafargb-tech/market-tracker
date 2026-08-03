@@ -1579,65 +1579,86 @@ def scrape_advfn(date_str):
 
 
 def fetch_market_context(today_str):
-    """Obtiene el contexto de mercado del día desde ADVFN y Edward Jones."""
-    import urllib.request, re
-
-    sources = [
-        f"https://www.advfn.com/world-daily-market-briefing/{today_str}",
-        "https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/daily-market-recap",
-    ]
+    """Obtiene contexto de mercado via Make (proxy para ADVFN) y Edward Jones."""
+    import re, os
+    try:
+        from curl_cffi import requests as cf_requests
+        use_cffi = True
+    except ImportError:
+        import urllib.request
+        use_cffi = False
 
     texts = []
 
-    # Buscar agenda económica del día
-    try:
-        import urllib.parse
-        query = urllib.parse.quote(f"economic calendar earnings today {today_str}")
-        agenda_url = f"https://www.marketwatch.com/economy-politics/calendar"
-        req_agenda = urllib.request.Request(agenda_url, headers={
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        })
-        with urllib.request.urlopen(req_agenda, timeout=10) as r:
-            html_agenda = r.read().decode("utf-8", errors="ignore")
-        html_agenda = re.sub(r'<(script|style|nav|header|footer)[^>]*>.*?</\1>', ' ', html_agenda, flags=re.DOTALL|re.IGNORECASE)
-        paras = re.findall(r'<(?:td|p|li)[^>]*>(.*?)</(?:td|p|li)>', html_agenda, re.DOTALL|re.IGNORECASE)
-        agenda_items = []
-        for p in paras:
-            clean = re.sub(r'<[^>]+>', ' ', p).strip()
-            clean = re.sub(r'\s+', ' ', clean)
-            if 10 < len(clean) < 200:
-                agenda_items.append(clean)
-        if agenda_items:
-            texts.append(f"[AGENDA ECONOMICA HOY]\n" + "\n".join(agenda_items[:20]))
-    except Exception:
-        pass
-
-    for url in sources:
+    # 1. ADVFN via Make webhook proxy
+    make_advfn = os.environ.get("MAKE_ADVFN_URL", "")
+    if make_advfn:
         try:
-            req = urllib.request.Request(url, headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-            })
-            with urllib.request.urlopen(req, timeout=15) as r:
-                html = r.read().decode("utf-8", errors="ignore")
+            url = f"{make_advfn}?date={today_str}"
+            if use_cffi:
+                r = cf_requests.get(url, impersonate="chrome120", timeout=20)
+                html = r.text
+                ok = r.status_code == 200
+            else:
+                import urllib.request
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    html = resp.read().decode("utf-8", errors="ignore")
+                ok = True
 
-            # Limpiar HTML
-            html = re.sub(r'<(script|style|nav|header|footer|aside)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL|re.IGNORECASE)
-            paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL|re.IGNORECASE)
+            if ok and len(html) > 500:
+                html_clean = re.sub(r'<(script|style|nav|header|footer|aside)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL|re.IGNORECASE)
+                paras = re.findall(r'<p[^>]*>(.*?)</p>', html_clean, re.DOTALL|re.IGNORECASE)
+                good = []
+                for p in paras:
+                    clean = re.sub(r'<[^>]+>', ' ', p).strip()
+                    clean = re.sub(r'\s+', ' ', clean)
+                    if len(clean) > 100:
+                        good.append(clean)
+                if good:
+                    text = " ".join(good)[:2500]
+                    print(f"   ✅ ADVFN (via Make): {len(good)} parrafos")
+                    print(f"   🔍 Preview: {good[0][:120]!r}")
+                    texts.append(f"[FUENTE: ADVFN]\n{text}")
+                else:
+                    print("   ⚠️  ADVFN via Make: sin parrafos utiles")
+            else:
+                print(f"   ⚠️  ADVFN via Make: respuesta vacia o error")
+        except Exception as e:
+            print(f"   ⚠️  ADVFN via Make: {e}")
+
+    # 2. Edward Jones (directo, no bloqueado)
+    try:
+        ej_url = "https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/daily-market-recap"
+        if use_cffi:
+            r = cf_requests.get(ej_url, impersonate="chrome120", timeout=15)
+            html = r.text
+            ok = r.status_code == 200
+        else:
+            import urllib.request
+            req = urllib.request.Request(ej_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                html = resp.read().decode("utf-8", errors="ignore")
+            ok = True
+
+        if ok:
+            html_clean = re.sub(r'<(script|style|nav|header|footer|aside)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL|re.IGNORECASE)
+            paras = re.findall(r'<p[^>]*>(.*?)</p>', html_clean, re.DOTALL|re.IGNORECASE)
             good = []
-            for p in paragraphs:
+            for p in paras:
                 clean = re.sub(r'<[^>]+>', ' ', p).strip()
                 clean = re.sub(r'\s+', ' ', clean)
-                if len(clean) > 80:
+                if len(clean) > 100:
                     good.append(clean)
-            text = " ".join(good)[:2000]
-            if len(text) > 200:
-                print(f"   \U0001f50d Preview {url[:50]}: {text[:150]!r}")
-                texts.append(f"[{url}]\n{text}")
-        except Exception as e:
-            print(f"   ⚠️  No se pudo obtener {url}: {e}")
+            if good:
+                text = " ".join(good)[:2000]
+                print(f"   ✅ Edward Jones: {len(good)} parrafos")
+                texts.append(f"[FUENTE: Edward Jones]\n{text}")
+    except Exception as e:
+        print(f"   ⚠️  Edward Jones: {e}")
 
+    if not texts:
+        print("   ⚠️  Sin contexto externo disponible")
     return "\n\n".join(texts) if texts else None
 
 
