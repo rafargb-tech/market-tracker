@@ -1609,23 +1609,30 @@ def fetch_market_context(today_str):
                 ok = True
 
             if ok and len(html) > 500:
+                print(f"   📄 ADVFN HTML recibido: {len(html)} chars")
                 html_clean = re.sub(r'<(script|style|nav|header|footer|aside)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL|re.IGNORECASE)
+                # Intentar párrafos <p>
                 paras = re.findall(r'<p[^>]*>(.*?)</p>', html_clean, re.DOTALL|re.IGNORECASE)
+                # También intentar <div> con texto largo
+                divs = re.findall(r'<div[^>]*>(.*?)</div>', html_clean, re.DOTALL|re.IGNORECASE)
+                all_blocks = paras + divs
                 good = []
-                for p in paras:
+                for p in all_blocks:
                     clean = re.sub(r'<[^>]+>', ' ', p).strip()
                     clean = re.sub(r'\s+', ' ', clean)
-                    if len(clean) > 100:
+                    if len(clean) > 150:
                         good.append(clean)
+                # Mostrar primeros 300 chars del HTML para diagnóstico
+                print(f"   🔍 HTML preview: {html[:300]!r}")
                 if good:
                     text = " ".join(good)[:2500]
-                    print(f"   ✅ ADVFN (via Make): {len(good)} parrafos")
-                    print(f"   🔍 Preview: {good[0][:120]!r}")
+                    print(f"   ✅ ADVFN (via Make): {len(good)} bloques de texto")
+                    print(f"   🔍 Texto preview: {good[0][:120]!r}")
                     texts.append(f"[FUENTE: ADVFN]\n{text}")
                 else:
-                    print("   ⚠️  ADVFN via Make: sin parrafos utiles")
+                    print(f"   ⚠️  ADVFN via Make: sin bloques utiles. Parrafos encontrados: {len(paras)}")
             else:
-                print(f"   ⚠️  ADVFN via Make: respuesta vacia o error")
+                print(f"   ⚠️  ADVFN via Make: respuesta vacia o error. HTML len: {len(html)}")
         except Exception as e:
             print(f"   ⚠️  ADVFN via Make: {e}")
 
