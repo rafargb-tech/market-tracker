@@ -1579,7 +1579,7 @@ def scrape_advfn(date_str):
 
 
 def fetch_market_context(today_str):
-    """Obtiene contexto de mercado via Make (proxy para ADVFN) y Edward Jones."""
+    """Obtiene contexto de mercado via Make (proxy ADVFN) y Edward Jones como complemento."""
     import re, os
     try:
         from curl_cffi import requests as cf_requests
@@ -1587,6 +1587,27 @@ def fetch_market_context(today_str):
     except ImportError:
         import urllib.request
         use_cffi = False
+
+    def fetch_url(url):
+        if use_cffi:
+            r = cf_requests.get(url, impersonate="chrome120", timeout=20)
+            return r.text if r.status_code == 200 else None
+        else:
+            import urllib.request
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return resp.read().decode("utf-8", errors="ignore")
+
+    def extract_text(html, min_len=100):
+        html_clean = re.sub(r'<(script|style|nav|header|footer|aside|form)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL|re.IGNORECASE)
+        paras = re.findall(r'<p[^>]*>(.*?)</p>', html_clean, re.DOTALL|re.IGNORECASE)
+        good = []
+        for p in paras:
+            clean = re.sub(r'<[^>]+>', ' ', p).strip()
+            clean = re.sub(r'\s+', ' ', clean)
+            if len(clean) > min_len:
+                good.append(clean)
+        return good
 
     texts = []
 
@@ -1596,71 +1617,32 @@ def fetch_market_context(today_str):
         try:
             import time
             url = f"{make_advfn}?date={today_str}&_t={int(time.time())}"
-            print(f"   📅 Solicitando ADVFN fecha: {today_str}")
-            if use_cffi:
-                r = cf_requests.get(url, impersonate="chrome120", timeout=20)
-                html = r.text
-                ok = r.status_code == 200
-            else:
-                import urllib.request
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=20) as resp:
-                    html = resp.read().decode("utf-8", errors="ignore")
-                ok = True
-
-            if ok and len(html) > 500:
-                print(f"   📄 ADVFN HTML recibido: {len(html)} chars")
-                html_clean = re.sub(r'<(script|style|nav|header|footer|aside)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL|re.IGNORECASE)
-                # Intentar párrafos <p>
-                paras = re.findall(r'<p[^>]*>(.*?)</p>', html_clean, re.DOTALL|re.IGNORECASE)
-                # También intentar <div> con texto largo
-                divs = re.findall(r'<div[^>]*>(.*?)</div>', html_clean, re.DOTALL|re.IGNORECASE)
-                all_blocks = paras + divs
-                good = []
-                for p in all_blocks:
-                    clean = re.sub(r'<[^>]+>', ' ', p).strip()
-                    clean = re.sub(r'\s+', ' ', clean)
-                    if len(clean) > 150:
-                        good.append(clean)
-                # Mostrar primeros 300 chars del HTML para diagnóstico
-                print(f"   🔍 HTML preview: {html[:300]!r}")
+            print(f"   📅 Solicitando ADVFN via Make: fecha {today_str}")
+            html = fetch_url(url)
+            if html and len(html) > 500:
+                good = extract_text(html, min_len=120)
                 if good:
                     text = " ".join(good)[:2500]
-                    print(f"   ✅ ADVFN (via Make): {len(good)} bloques de texto")
-                    print(f"   🔍 Texto preview: {good[0][:120]!r}")
+                    print(f"   ✅ ADVFN (via Make): {len(good)} parrafos")
+                    print(f"   🔍 Preview: {good[0][:120]!r}")
                     texts.append(f"[FUENTE: ADVFN]\n{text}")
                 else:
-                    print(f"   ⚠️  ADVFN via Make: sin bloques utiles. Parrafos encontrados: {len(paras)}")
+                    print("   ⚠️  ADVFN via Make: sin parrafos utiles")
             else:
-                print(f"   ⚠️  ADVFN via Make: respuesta vacia o error. HTML len: {len(html)}")
+                print(f"   ⚠️  ADVFN via Make: respuesta vacia o error")
         except Exception as e:
             print(f"   ⚠️  ADVFN via Make: {e}")
+    else:
+        print("   ⚠️  MAKE_ADVFN_URL no configurada")
 
-    # 2. Edward Jones (directo, no bloqueado)
+    # 2. Edward Jones como complemento
     try:
         ej_url = "https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/daily-market-recap"
-        if use_cffi:
-            r = cf_requests.get(ej_url, impersonate="chrome120", timeout=15)
-            html = r.text
-            ok = r.status_code == 200
-        else:
-            import urllib.request
-            req = urllib.request.Request(ej_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                html = resp.read().decode("utf-8", errors="ignore")
-            ok = True
-
-        if ok:
-            html_clean = re.sub(r'<(script|style|nav|header|footer|aside)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL|re.IGNORECASE)
-            paras = re.findall(r'<p[^>]*>(.*?)</p>', html_clean, re.DOTALL|re.IGNORECASE)
-            good = []
-            for p in paras:
-                clean = re.sub(r'<[^>]+>', ' ', p).strip()
-                clean = re.sub(r'\s+', ' ', clean)
-                if len(clean) > 100:
-                    good.append(clean)
+        html = fetch_url(ej_url)
+        if html:
+            good = extract_text(html, min_len=100)
             if good:
-                text = " ".join(good)[:2000]
+                text = " ".join(good)[:1500]
                 print(f"   ✅ Edward Jones: {len(good)} parrafos")
                 texts.append(f"[FUENTE: Edward Jones]\n{text}")
     except Exception as e:
