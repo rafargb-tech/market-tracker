@@ -1594,7 +1594,9 @@ def fetch_market_context(today_str):
     make_advfn = os.environ.get("MAKE_ADVFN_URL", "")
     if make_advfn:
         try:
-            url = f"{make_advfn}?date={today_str}"
+            import time
+            url = f"{make_advfn}?date={today_str}&_t={int(time.time())}"
+            print(f"   📅 Solicitando ADVFN fecha: {today_str}")
             if use_cffi:
                 r = cf_requests.get(url, impersonate="chrome120", timeout=20)
                 html = r.text
