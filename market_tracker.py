@@ -1621,6 +1621,24 @@ def fetch_market_context(today_str):
                 good.append(clean)
         return good
 
+    def detect_dates(text):
+        """Detecta fechas mencionadas en el texto para diagnóstico."""
+        found = []
+        # Formatos: "August 4", "Aug 4", "4 August", "Monday", "2026-08-04"
+        months = r"(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+        for m in re.findall(rf"{months}\s+\d{{1,2}}", text[:600], re.IGNORECASE):
+            found.append(m)
+        for m in re.findall(r"\d{4}-\d{2}-\d{2}", text[:600]):
+            found.append(m)
+        for m in re.findall(r"(?:Monday|Tuesday|Wednesday|Thursday|Friday)", text[:400]):
+            found.append(m)
+        # Deduplicar conservando orden
+        seen = set(); uniq = []
+        for f in found:
+            if f.lower() not in seen:
+                seen.add(f.lower()); uniq.append(f)
+        return uniq[:5]
+
     texts = []
 
     # 1. ADVFN via Make webhook proxy
@@ -1635,13 +1653,14 @@ def fetch_market_context(today_str):
                 good = extract_text(html, min_len=40, use_article_div=True)
                 if good:
                     text = " ".join(good)[:2500]
-                    print(f"   ✅ ADVFN (via Make): {len(good)} parrafos")
-                    print(f"   🔍 Preview: {good[0][:120]!r}")
+                    dates = detect_dates(text)
+                    print(f"   ✅ ADVFN (via Make): {len(good)} parrafos | fechas detectadas: {dates}")
+                    print(f"   🔍 ADVFN dice: {text[:220]!r}")
                     texts.append(f"[FUENTE: ADVFN]\n{text}")
                 else:
                     print("   ⚠️  ADVFN via Make: sin parrafos utiles")
             else:
-                print(f"   ⚠️  ADVFN via Make: respuesta vacia o error")
+                print(f"   ⚠️  ADVFN via Make: respuesta vacia o error (len={len(html) if html else 0})")
         except Exception as e:
             print(f"   ⚠️  ADVFN via Make: {e}")
     else:
@@ -1655,7 +1674,9 @@ def fetch_market_context(today_str):
             good = extract_text(html, min_len=100)
             if good:
                 text = " ".join(good)[:1500]
-                print(f"   ✅ Edward Jones: {len(good)} parrafos")
+                dates = detect_dates(text)
+                print(f"   ✅ Edward Jones: {len(good)} parrafos | fechas detectadas: {dates}")
+                print(f"   🔍 Edward Jones dice: {text[:220]!r}")
                 texts.append(f"[FUENTE: Edward Jones]\n{text}")
     except Exception as e:
         print(f"   ⚠️  Edward Jones: {e}")
