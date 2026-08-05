@@ -1598,7 +1598,12 @@ def fetch_market_context(today_str):
             with urllib.request.urlopen(req, timeout=20) as resp:
                 return resp.read().decode("utf-8", errors="ignore")
 
-    def extract_text(html, min_len=100):
+    def extract_text(html, min_len=100, use_article_div=False):
+        # Si es ADVFN, extraer solo el contenido de div.article-content
+        if use_article_div:
+            match = re.search(r'<div[^>]*class=["\'][^"\']*article-content[^"\']*["\'][^>]*>(.*?)</div\s*>', html, re.DOTALL|re.IGNORECASE)
+            if match:
+                html = match.group(1)
         html_clean = re.sub(r'<(script|style|nav|header|footer|aside|form)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL|re.IGNORECASE)
         paras = re.findall(r'<p[^>]*>(.*?)</p>', html_clean, re.DOTALL|re.IGNORECASE)
         good = []
@@ -1620,7 +1625,7 @@ def fetch_market_context(today_str):
             print(f"   📅 Solicitando ADVFN via Make: fecha {today_str}")
             html = fetch_url(url)
             if html and len(html) > 500:
-                good = extract_text(html, min_len=120)
+                good = extract_text(html, min_len=40, use_article_div=True)
                 if good:
                     text = " ".join(good)[:2500]
                     print(f"   ✅ ADVFN (via Make): {len(good)} parrafos")
