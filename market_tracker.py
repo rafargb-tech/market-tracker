@@ -1389,7 +1389,14 @@ def main():
     # 1+2. Narrativa con Claude (busca el briefing del día via web search)
     # Obtener contexto de mercado antes de llamar a Claude
     print("   🌐 Obteniendo contexto de mercado...")
-    market_context = fetch_market_context(datetime.today().strftime("%Y-%m-%d"))
+    # Usar zona horaria EDT para obtener la fecha correcta del mercado
+    try:
+        from datetime import timezone, timedelta
+        edt = timezone(timedelta(hours=-4))
+        market_date = datetime.now(edt).strftime("%Y-%m-%d")
+    except Exception:
+        market_date = datetime.today().strftime("%Y-%m-%d")
+    market_context = fetch_market_context(market_date)
     if market_context:
         print(f"   ✅ Contexto obtenido ({len(market_context)} chars)")
     else:
