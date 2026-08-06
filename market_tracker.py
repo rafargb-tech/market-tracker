@@ -1586,7 +1586,7 @@ def scrape_advfn(date_str):
 
 
 def fetch_market_context(today_str):
-    """Obtiene contexto de mercado via Make (proxy ADVFN) y Edward Jones como complemento."""
+    """Obtiene contexto de mercado del dia desde Phillip Capital DIFC."""
     import re, os
     try:
         from curl_cffi import requests as cf_requests
@@ -1641,45 +1641,33 @@ def fetch_market_context(today_str):
 
     texts = []
 
-    # 1. ADVFN via Make webhook proxy
-    make_advfn = os.environ.get("MAKE_ADVFN_URL", "")
-    if make_advfn:
-        try:
-            import time
-            url = f"{make_advfn}?date={today_str}&_t={int(time.time())}"
-            print(f"   📅 Solicitando ADVFN via Make: fecha {today_str}")
-            html = fetch_url(url)
-            if html and len(html) > 500:
-                good = extract_text(html, min_len=40, use_article_div=True)
-                if good:
-                    text = " ".join(good)[:2500]
-                    dates = detect_dates(text)
-                    print(f"   ✅ ADVFN (via Make): {len(good)} parrafos | fechas detectadas: {dates}")
-                    print(f"   🔍 ADVFN dice: {text[:220]!r}")
-                    texts.append(f"[FUENTE: ADVFN]\n{text}")
-                else:
-                    print("   ⚠️  ADVFN via Make: sin parrafos utiles")
-            else:
-                print(f"   ⚠️  ADVFN via Make: respuesta vacia o error (len={len(html) if html else 0})")
-        except Exception as e:
-            print(f"   ⚠️  ADVFN via Make: {e}")
-    else:
-        print("   ⚠️  MAKE_ADVFN_URL no configurada")
-
-    # 2. Edward Jones como complemento
+    # Fuente única: Phillip Capital DIFC — briefing diario del día con cobertura global
+    # (ADVFN pendiente de integración vía servidor soyrgb; Edward Jones deshabilitado
+    #  por servir el recap del día anterior a la hora del cron)
     try:
-        ej_url = "https://www.edwardjones.com/us-en/market-news-insights/stock-market-news/daily-market-recap"
-        html = fetch_url(ej_url)
+        from datetime import datetime as _dt
+        dt = _dt.strptime(today_str, "%Y-%m-%d")
+        month_name = dt.strftime("%B").lower()
+        day = dt.day
+        pc_url = f"https://phillipcapitaldifc.ae/daily-market-updates-{month_name}-{day:02d}/"
+        print(f"   📅 Solicitando Phillip Capital: {pc_url}")
+        html = fetch_url(pc_url)
         if html:
-            good = extract_text(html, min_len=100)
+            good = extract_text(html, min_len=120)
+            # Filtrar el boilerplate corporativo de Phillip Capital
+            good = [g for g in good if "PhillipCapital" not in g and "DFSA-regulated" not in g]
             if good:
-                text = " ".join(good)[:1500]
+                text = " ".join(good)[:2800]
                 dates = detect_dates(text)
-                print(f"   ✅ Edward Jones: {len(good)} parrafos | fechas detectadas: {dates}")
-                print(f"   🔍 Edward Jones dice: {text[:220]!r}")
-                texts.append(f"[FUENTE: Edward Jones]\n{text}")
+                print(f"   ✅ Phillip Capital: {len(good)} parrafos | fechas detectadas: {dates}")
+                print(f"   🔍 Preview: {text[:200]!r}")
+                texts.append(f"[FUENTE: Phillip Capital Daily Briefing]\n{text}")
+            else:
+                print("   ⚠️  Phillip Capital: sin contenido util")
+        else:
+            print("   ⚠️  Phillip Capital: no disponible hoy (revisar URL del dia)")
     except Exception as e:
-        print(f"   ⚠️  Edward Jones: {e}")
+        print(f"   ⚠️  Phillip Capital: {e}")
 
     if not texts:
         print("   ⚠️  Sin contexto externo disponible")
