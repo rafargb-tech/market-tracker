@@ -1586,7 +1586,11 @@ def scrape_advfn(date_str):
 
 
 def fetch_market_context(today_str):
-    """Obtiene contexto de mercado del dia desde Phillip Capital DIFC."""
+    """Obtiene contexto de mercado del dia desde Forexlive (investingLive).
+
+    Extrae tres capas: titulares de portada (pulso del dia), session wraps
+    (analisis con cifras de Europa/Asia/EEUU) y Phillip Capital como respaldo.
+    """
     import re, os
     try:
         from curl_cffi import requests as cf_requests
@@ -1596,81 +1600,97 @@ def fetch_market_context(today_str):
         use_cffi = False
 
     def fetch_url(url):
-        if use_cffi:
-            r = cf_requests.get(url, impersonate="chrome120", timeout=20)
-            return r.text if r.status_code == 200 else None
-        else:
-            import urllib.request
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                return resp.read().decode("utf-8", errors="ignore")
+        try:
+            if use_cffi:
+                r = cf_requests.get(url, impersonate="chrome120", timeout=15)
+                return r.text if r.status_code == 200 else None
+            else:
+                import urllib.request
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    return resp.read().decode("utf-8", errors="ignore")
+        except Exception:
+            return None
 
-    def extract_text(html, min_len=100, use_article_div=False):
-        # Si es ADVFN, extraer solo el contenido de div.article-content
-        if use_article_div:
-            match = re.search(r'<div[^>]*class=["\'][^"\']*article-content[^"\']*["\'][^>]*>(.*?)</div\s*>', html, re.DOTALL|re.IGNORECASE)
-            if match:
-                html = match.group(1)
-        html_clean = re.sub(r'<(script|style|nav|header|footer|aside|form)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL|re.IGNORECASE)
-        paras = re.findall(r'<p[^>]*>(.*?)</p>', html_clean, re.DOTALL|re.IGNORECASE)
-        good = []
+    def clean_html_text(fragment):
+        t = re.sub(r"<[^>]+>", " ", fragment)
+        t = t.replace("&amp;", "&").replace("&#x27;", "'").replace("&quot;", chr(34)).replace("&nbsp;", " ")
+        return re.sub(r"\s+", " ", t).strip()
+
+    def extract_paragraphs(html, min_len=50):
+        clean = re.sub(r"<(script|style|nav|header|footer|aside|form|svg)[^>]*>.*?</\1>", " ",
+                       html, flags=re.DOTALL | re.IGNORECASE)
+        paras = re.findall(r"<p[^>]*>(.*?)</p>", clean, re.DOTALL | re.IGNORECASE)
+        out = []
         for p in paras:
-            clean = re.sub(r'<[^>]+>', ' ', p).strip()
-            clean = re.sub(r'\s+', ' ', clean)
-            if len(clean) > min_len:
-                good.append(clean)
-        return good
-
-    def detect_dates(text):
-        """Detecta fechas mencionadas en el texto para diagnóstico."""
-        found = []
-        # Formatos: "August 4", "Aug 4", "4 August", "Monday", "2026-08-04"
-        months = r"(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
-        for m in re.findall(rf"{months}\s+\d{{1,2}}", text[:600], re.IGNORECASE):
-            found.append(m)
-        for m in re.findall(r"\d{4}-\d{2}-\d{2}", text[:600]):
-            found.append(m)
-        for m in re.findall(r"(?:Monday|Tuesday|Wednesday|Thursday|Friday)", text[:400]):
-            found.append(m)
-        # Deduplicar conservando orden
-        seen = set(); uniq = []
-        for f in found:
-            if f.lower() not in seen:
-                seen.add(f.lower()); uniq.append(f)
-        return uniq[:5]
+            t = clean_html_text(p)
+            if len(t) > min_len:
+                out.append(t)
+        return out
 
     texts = []
+    FL = "https://www.forexlive.com"
 
-    # Fuente única: Phillip Capital DIFC — briefing diario del día con cobertura global
-    # (ADVFN pendiente de integración vía servidor soyrgb; Edward Jones deshabilitado
-    #  por servir el recap del día anterior a la hora del cron)
-    try:
-        from datetime import datetime as _dt
-        dt = _dt.strptime(today_str, "%Y-%m-%d")
-        month_name = dt.strftime("%B").lower()
-        day = dt.day
-        pc_url = f"https://phillipcapitaldifc.ae/daily-market-updates-{month_name}-{day:02d}/"
-        print(f"   📅 Solicitando Phillip Capital: {pc_url}")
-        html = fetch_url(pc_url)
-        if html:
-            good = extract_text(html, min_len=120)
-            # Filtrar el boilerplate corporativo de Phillip Capital
-            good = [g for g in good if "PhillipCapital" not in g and "DFSA-regulated" not in g]
-            if good:
-                text = " ".join(good)[:2800]
-                dates = detect_dates(text)
-                print(f"   ✅ Phillip Capital: {len(good)} parrafos | fechas detectadas: {dates}")
-                print(f"   🔍 Preview: {text[:200]!r}")
-                texts.append(f"[FUENTE: Phillip Capital Daily Briefing]\n{text}")
-            else:
-                print("   ⚠️  Phillip Capital: sin contenido util")
-        else:
-            print("   ⚠️  Phillip Capital: no disponible hoy (revisar URL del dia)")
-    except Exception as e:
-        print(f"   ⚠️  Phillip Capital: {e}")
+    home = fetch_url(FL + "/")
+    if home:
+        # (a) Titulares de portada: pulso del dia con cifras
+        clean = re.sub(r"<(script|style|nav|svg)[^>]*>.*?</\1>", " ", home, flags=re.DOTALL | re.IGNORECASE)
+        blocks = re.findall(r"<(?:h1|h2|h3|h4)[^>]*>(.*?)</(?:h1|h2|h3|h4)>", clean, re.DOTALL | re.IGNORECASE)
+        headlines, seen = [], set()
+        for b in blocks:
+            t = clean_html_text(b)
+            if len(t) > 35 and t not in seen and not t.lower().startswith(("search", "access", "get ")):
+                seen.add(t)
+                headlines.append(t)
+        if headlines:
+            print(f"   \u2705 Forexlive titulares: {len(headlines)}")
+            texts.append("[TITULARES DE HOY (Forexlive)]\n" + "\n".join(f"- {h}" for h in headlines[:20]))
+
+        # (b) Session wraps y noticias con datos: el analisis con cifras
+        links = re.findall(r'href="(/(?:news|technical-analysis|central-bank)/[^"]+)"', home)
+        seen_l = set(); article_urls = []
+        for l in links:
+            if l not in seen_l:
+                seen_l.add(l); article_urls.append(FL + l)
+
+        wraps = [u for u in article_urls if "wrap" in u.lower() or "session" in u.lower()]
+        others = [u for u in article_urls if u not in wraps]
+        picked = wraps[:3] + others[:4]
+
+        for url in picked:
+            html = fetch_url(url)
+            if not html:
+                continue
+            paras = extract_paragraphs(html, min_len=50)
+            paras = [p for p in paras if "forexlive" not in p.lower() and "sign up" not in p.lower()]
+            if paras:
+                label = "SESSION WRAP" if url in wraps else "NOTICIA"
+                slug = url.rstrip("/").split("/")[-1][:60]
+                body = " ".join(paras)[:1400]
+                texts.append(f"[{label}: {slug}]\n{body}")
+        n_articles = sum(1 for t in texts if t.startswith("[SESSION") or t.startswith("[NOTICIA"))
+        print(f"   \u2705 Forexlive articulos: {n_articles}")
+    else:
+        print("   \u26a0\ufe0f  Forexlive no disponible")
+
+    # Respaldo: Phillip Capital (por si Forexlive fallara por completo)
+    if not texts:
+        try:
+            from datetime import datetime as _dt
+            dt = _dt.strptime(today_str, "%Y-%m-%d")
+            pc_url = f"https://phillipcapitaldifc.ae/daily-market-updates-{dt.strftime('%B').lower()}-{dt.day:02d}/"
+            html = fetch_url(pc_url)
+            if html:
+                paras = extract_paragraphs(html, min_len=120)
+                paras = [p for p in paras if "PhillipCapital" not in p and "DFSA-regulated" not in p]
+                if paras:
+                    print(f"   \u2705 Phillip Capital (respaldo): {len(paras)} parrafos")
+                    texts.append("[RESPALDO: Phillip Capital]\n" + " ".join(paras)[:2000])
+        except Exception as e:
+            print(f"   \u26a0\ufe0f  Phillip Capital: {e}")
 
     if not texts:
-        print("   ⚠️  Sin contexto externo disponible")
+        print("   \u26a0\ufe0f  Sin contexto externo disponible")
     return "\n\n".join(texts) if texts else None
 
 
@@ -1707,33 +1727,27 @@ def generate_narrative(api_key, advfn_text, phase_name, signals, sector_data, to
         f"Usa el contenido encontrado para contextualizar la narrativa con los eventos reales del día."
     )
 
-    system_prompt = """Eres el autor de un newsletter diario de inversion llamado Market Tracker. Escribes como un analista veterano con criterio propio: alguien que lleva anos viendo ciclos, que sabe cuando un dato importa de verdad y cuando es ruido disfrazado de noticia. Tu ironia no es un recurso decorativo, es tu forma natural de procesar un mundo donde los bancos centrales dicen una cosa, el mercado escucha otra, y ambos suelen equivocarse. No escribes para quedar bien. Escribes para que quien te lea entienda que esta pasando y por que deberia importarle.
+    system_prompt = """Eres el autor de Market Tracker, un newsletter diario de inversion en espanol. Escribes como un analista veterano con criterio propio: alguien que lleva anos viendo ciclos, que sabe cuando un dato importa y cuando es ruido. Tu ironia no es un chiste, es tu forma de mirar un mundo donde los bancos centrales dicen una cosa, el mercado escucha otra, y ambos suelen equivocarse. Escribes para que el lector entienda que esta pasando y por que le importa.
 
-ESTILO:
-Prosa con criterio y personalidad. Cada parrafo desarrolla una idea con sus datos concretos y su consecuencia, sin irse a bloques interminables ni quedarse en frases sueltas. Conecta causa y efecto, dato y consecuencia. El lector debe sentir que lee a alguien que piensa, no a alguien que enumera titulares.
-Sin bullet points, sin listas, sin guiones largos. Punto y seguido o coma cuando la frase necesita respirar.
-Sin muletillas periodisticas del tipo "en un contexto de", "cabe destacar", "es importante senalar". Si algo importa, lo dices directamente.
+VOZ Y ESTILO:
+Prosa con criterio y personalidad, nunca acartonada. Ironia seca cuando el contraste entre lo que se dice y lo que ocurre lo pide.
+Sin bullet points, sin guiones largos, sin muletillas ("en un contexto de", "cabe destacar"). Si algo importa, se dice directo.
 Nunca recomendaciones de compra o venta.
+PRIORIDAD ABSOLUTA: los datos concretos. Cada nivel, precio, porcentaje o cifra que traiga el contexto se usa. Un dato real ancla el texto; sin datos, suena vacio. El contexto de Forexlive trae muchas cifras (crudo, oro, plata, divisas, bonos, indices, movimientos de acciones concretas): usalas.
 
-IRONIA:
-No es un chiste al final del parrafo. Es la perspectiva desde la que analizas. Cuando la Fed dice que depende de los datos pero lleva seis meses ignorandolos, lo dices. Cuando el mercado celebra un dato macro mediocre como si fuera una victoria, lo notas. La ironia emerge del contraste entre lo que se dice y lo que ocurre, entre las expectativas y la realidad.
+ESTRUCTURA FIJA OBLIGATORIA:
+El newsletter sigue SIEMPRE este orden de nueve bloques. Cada bloque es uno o dos parrafos, en prosa, SIN titulos ni encabezados visibles (el lector no debe ver "Bloque 1", solo leer prosa fluida que fluye de un tema al siguiente en este orden):
+1. APERTURA con los futuros: como vienen los futuros de EEUU hoy y el tono general de la sesion que arranca.
+2. CIERRE ANTERIOR: que dejo la sesion previa y las noticias relevantes desde el ultimo Market Tracker.
+3. CITAS MACRO: los datos macro y eventos relevantes de los proximos 3-4 dias (inflacion, empleo, bancos centrales, earnings importantes).
+4. MERCADOS EEUU: movimientos relevantes, indices, acciones concretas con sus cifras.
+5. MERCADOS EUROPA: como cerraron o se mueven las plazas europeas, con datos.
+6. MERCADOS ASIA: Nikkei, Hang Seng, KOSPI, China, con sus movimientos.
+7. COMMODITIES: petroleo, oro, y otros relevantes, con su precio y su causa.
+8. QUE ESPERAR: sintesis de lo que el lector debe vigilar en las proximas horas y dias.
+9. SPI Y SECTORES: cierre BREVE, una o dos frases, conectando la fase del ciclo con los sectores. Es la nota al pie, no el tema.
 
-ESTRUCTURA DEL TEXTO:
-Abre con el hecho mas relevante del dia, relatado con contexto y con sus cifras. No "los mercados cayeron" sino cuanto, por que cayeron y que lo desencadeno.
-Desarrolla dos o tres hilos conectados con sus datos: bancos centrales y su efecto en bonos y divisas, la tension entre EEUU solido y Europa debil, la geopolitica y su impacto en commodities.
-Incluye la agenda macro pendiente: datos que se publican hoy o esta semana, earnings importantes, reuniones de bancos centrales.
-El ciclo SPI es solo una mencion breve, una nota al pie de una o dos frases. NO es el tema del newsletter y NO merece un parrafo propio.
-
-COBERTURA:
-Mercados globales cuando hay movimiento: Europa, Asia, emergentes, no solo SP500.
-Commodities: petroleo y oro con su cifra siempre que sean relevantes.
-Divisas: dolar, euro, yen cuando el movimiento tenga causa y consecuencia.
-Datos macro del dia con contexto historico cuando aporte perspectiva real.
-Earnings relevantes con lectura de lo que revelan.
-
-LONGITUD: 4 o 5 parrafos de longitud media. Ni frases de una linea, ni bloques de diez lineas.
-
-PRIORIDAD ABSOLUTA: los datos concretos. Si el briefing trae numeros (indices, crudo, oro, divisas, bonos, movimientos de acciones), usalos. Un dato real ancla el texto; sin datos, el texto suena generalista y vacio."""
+Si algun bloque no tiene datos en el contexto, se cubre brevemente con lo que se sepa del entorno, sin inventar cifras. Los bloques fluyen como prosa continua, cada uno separado del siguiente por una linea en blanco. Hay margen para un apunte de coyuntura relevante si algo lo merece, pero el orden de los nueve bloques no cambia."""
 
     from datetime import datetime as _dt
     fecha_larga = _dt.today().strftime("%A %d de %B de %Y")
@@ -1741,26 +1755,24 @@ PRIORIDAD ABSOLUTA: los datos concretos. Si el briefing trae numeros (indices, c
     market_context = advfn_text if advfn_text else ""
     context_section = f"\nCONTEXTO DE MERCADO DEL DIA (fuente externa):\n{market_context}\n" if market_context else "\nNo hay briefing externo disponible hoy. Usa los datos macro del Tracker como base.\n"
 
-    user_prompt = f"""HOY ES {today_str} ({fecha_larga}). El newsletter es de HOY. Si el contexto externo menciona la sesion previa, usalo como antecedente ("ayer...") pero ancla el texto a lo que ocurre HOY y lo que se espera en la jornada.
+    user_prompt = f"""HOY ES {today_str} ({fecha_larga}). El newsletter es de HOY. El contexto externo viene de Forexlive e incluye titulares del dia y session wraps con cifras de la sesion previa y de la que arranca. Usalo como materia prima: lo de la sesion cerrada es "ayer / cierre anterior", lo de futuros y agenda es "hoy y proximos dias".
 
-DATOS DEL TRACKER HOY:
+DATOS DEL TRACKER:
 Fase del ciclo SPI: {phase_name} ({degrees:.1f} grados)
-Indicadores macro: {macro_context}
+Indicadores macro propios: {macro_context}
 Sectores con mayor peso en esta fase: {top3_str}
 {context_section}
-INSTRUCCIONES DE ESCRITURA:
-Usa TODOS los datos numericos concretos que aparezcan en el contexto externo: niveles de indices, precio del petroleo y el oro, divisas, rendimientos de bonos, porcentajes de subida o bajada de acciones concretas. No los diluyas en generalidades. Si el contexto dice que el crudo sube o el oro cae, dilo con su cifra y su causa. Un dato concreto vale mas que tres frases vagas.
-Distingue lo de ayer de lo de hoy: que quedo de la sesion previa y que se espera o esta pasando en la de hoy.
-Menciona la agenda macro y earnings pendientes de hoy o esta semana.
-El ciclo SPI es solo una mencion breve al cierre, una o dos frases como mucho. No es el tema del newsletter, es una nota al pie. No dediques un parrafo entero a explicarlo.
-Cubre mercados globales: Europa, Asia, commodities, divisas, no solo EEUU.
-
-FORMATO: 4 o 5 parrafos de longitud media, ni frases sueltas ni bloques interminables. Cada parrafo desarrolla una idea con sus datos. Prosa con personalidad e ironia seca cuando la situacion lo merece. Sin guiones largos, sin listas, sin bullets, sin saltos de linea dentro de un parrafo. Cada parrafo separado por una linea en blanco."""
+INSTRUCCIONES:
+Escribe el newsletter siguiendo la ESTRUCTURA FIJA de nueve bloques en orden (apertura con futuros, cierre anterior, citas macro proximos 3-4 dias, mercados EEUU, mercados Europa, mercados Asia, commodities, que esperar, y cierre breve de SPI y sectores). No pongas titulos ni numeros de bloque: es prosa continua que pasa de un tema al siguiente en ese orden, cada bloque separado por una linea en blanco.
+Usa TODAS las cifras del contexto (crudo, oro, plata, divisas, bonos, indices, movimientos de acciones). No las diluyas. Un dato concreto vale mas que tres frases vagas.
+Si un bloque (por ejemplo Asia o Europa) tiene pocos datos en el contexto, cubrelo con lo que haya sin inventar cifras, pero no te lo saltes: el lector espera esas nueve partes.
+El bloque 9 (SPI y sectores) es solo una o dos frases al final. No es el tema del newsletter.
+Ironia seca cuando el contraste lo merezca. Sin guiones largos, sin listas, sin bullets, sin saltos de linea dentro de un mismo bloque."""
 
     try:
         payload = json.dumps({
             "model": "claude-sonnet-4-6",
-            "max_tokens": 2000,
+            "max_tokens": 3000,
             "system": system_prompt,
             # Sin web_search — contexto ya incluido en el prompt
             "messages": [{"role": "user", "content": user_prompt}]
