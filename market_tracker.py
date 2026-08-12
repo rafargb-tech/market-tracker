@@ -1736,7 +1736,7 @@ Nunca recomendaciones de compra o venta.
 PRIORIDAD ABSOLUTA: los datos concretos. Cada nivel, precio, porcentaje o cifra que traiga el contexto se usa. Un dato real ancla el texto; sin datos, suena vacio. El contexto de Forexlive trae muchas cifras (crudo, oro, plata, divisas, bonos, indices, movimientos de acciones concretas): usalas.
 
 ESTRUCTURA FIJA OBLIGATORIA:
-El newsletter sigue SIEMPRE este orden de nueve bloques. Cada bloque es uno o dos parrafos, en prosa, SIN titulos ni encabezados visibles (el lector no debe ver "Bloque 1", solo leer prosa fluida que fluye de un tema al siguiente en este orden):
+El newsletter sigue SIEMPRE este orden de nueve bloques. Cada bloque es UN parrafo breve (2 a 4 frases), en prosa, SIN titulos ni encabezados visibles (el lector no debe ver "Bloque 1", solo leer prosa fluida que fluye de un tema al siguiente en este orden):
 1. APERTURA con los futuros: como vienen los futuros de EEUU hoy y el tono general de la sesion que arranca.
 2. CIERRE ANTERIOR: que dejo la sesion previa y las noticias relevantes desde el ultimo Market Tracker.
 3. CITAS MACRO: los datos macro y eventos relevantes de los proximos 3-4 dias (inflacion, empleo, bancos centrales, earnings importantes).
@@ -1747,7 +1747,9 @@ El newsletter sigue SIEMPRE este orden de nueve bloques. Cada bloque es uno o do
 8. QUE ESPERAR: sintesis de lo que el lector debe vigilar en las proximas horas y dias.
 9. SPI Y SECTORES: cierre BREVE, una o dos frases, conectando la fase del ciclo con los sectores. Es la nota al pie, no el tema.
 
-Si algun bloque no tiene datos en el contexto, se cubre brevemente con lo que se sepa del entorno, sin inventar cifras. Los bloques fluyen como prosa continua, cada uno separado del siguiente por una linea en blanco. Hay margen para un apunte de coyuntura relevante si algo lo merece, pero el orden de los nueve bloques no cambia."""
+REGLA DE ORO ANTI-REPETICION (critica): cada dato, cifra, tema o evento se menciona UNA SOLA VEZ, en el bloque que le corresponde y en ningun otro. El CPI o dato macro que viene vive solo en el bloque 3 (citas macro), no lo repitas en apertura ni en que esperar. Ormuz y el petroleo viven solo en commodities. Cada divisa o accion en su bloque. Si un dato ya se uso en un bloque, los siguientes NO lo vuelven a mencionar. El bloque 8 (que esperar) no repite la agenda del 3: es una sintesis de tono y riesgo, no una lista de datos ya dichos.
+
+Si algun bloque no tiene datos en el contexto, se cubre en una sola frase con lo que se sepa del entorno, sin inventar cifras y sin rellenar. Los bloques fluyen como prosa continua, cada uno separado del siguiente por una linea en blanco. LONGITUD TOTAL: media, equilibrada, que se lea de un tiron. Mejor denso y sin relleno que largo y repetitivo."""
 
     from datetime import datetime as _dt
     fecha_larga = _dt.today().strftime("%A %d de %B de %Y")
@@ -1764,9 +1766,11 @@ Sectores con mayor peso en esta fase: {top3_str}
 {context_section}
 INSTRUCCIONES:
 Escribe el newsletter siguiendo la ESTRUCTURA FIJA de nueve bloques en orden (apertura con futuros, cierre anterior, citas macro proximos 3-4 dias, mercados EEUU, mercados Europa, mercados Asia, commodities, que esperar, y cierre breve de SPI y sectores). No pongas titulos ni numeros de bloque: es prosa continua que pasa de un tema al siguiente en ese orden, cada bloque separado por una linea en blanco.
-Usa TODAS las cifras del contexto (crudo, oro, plata, divisas, bonos, indices, movimientos de acciones). No las diluyas. Un dato concreto vale mas que tres frases vagas.
-Si un bloque (por ejemplo Asia o Europa) tiene pocos datos en el contexto, cubrelo con lo que haya sin inventar cifras, pero no te lo saltes: el lector espera esas nueve partes.
-El bloque 9 (SPI y sectores) es solo una o dos frases al final. No es el tema del newsletter.
+CADA BLOQUE UN PARRAFO BREVE de 2 a 4 frases. Longitud total media, que se lea de un tiron.
+REGLA ANTI-REPETICION: cada dato, cifra o evento aparece UNA SOLA VEZ, en su bloque. No menciones el mismo dato macro, la misma divisa, el mismo tema geopolitico o la misma accion en dos bloques distintos. El bloque "que esperar" NO repite la agenda ya dada en "citas macro": es sintesis de tono y riesgo, no relista los datos.
+Usa las cifras del contexto (crudo, oro, plata, divisas, bonos, indices, acciones), cada una en el bloque que le toca. Un dato concreto vale mas que tres frases vagas.
+Si un bloque (por ejemplo Asia o Europa) tiene pocos datos en el contexto, cubrelo en una sola frase sin inventar cifras y sin rellenar, pero no te lo saltes.
+El bloque 9 (SPI y sectores) es solo una o dos frases al final.
 Ironia seca cuando el contraste lo merezca. Sin guiones largos, sin listas, sin bullets, sin saltos de linea dentro de un mismo bloque."""
 
     try:
