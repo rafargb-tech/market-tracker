@@ -116,7 +116,7 @@ MACRO_DATA = {
         ("10Y - 3M",     "T10Y3M", "pts", "FRED", "Spread curva corta"),
     ],
     "UNITED STATES": [
-        ("Fed Funds Rate",    "FEDFUNDS",              "%",   "FRED", "Target upper bound"),
+        ("Fed Funds Rate",    "DFEDTARU",              "%",   "FRED", "Target upper bound"),
         ("CPI YoY",           "CPIAUCSL",              "%",   "FRED", "All items, not seas. adj."),
         ("Core CPI YoY",      "CPILFESL",              "%",   "FRED", "Ex food & energy"),
         ("GDP Growth QoQ",    "A191RL1Q225SBEA",       "%",   "FRED", "Real GDP, annualised"),
@@ -215,11 +215,17 @@ def get_fred_series(series_id):
 
     api_key = os.environ.get("FRED_API_KEY", "")
 
+    # Series diarias del objetivo FOMC: necesitan mas historia y el yoy se mide
+    # a ~252 dias habiles (1 año), no a 13 observaciones como las mensuales.
+    DAILY_SERIES = {"DFEDTARU", "DFEDTARL"}
+    is_daily = series_id in DAILY_SERIES
+    fetch_limit = 400 if is_daily else 20
+
     def fetch():
         if api_key:
             url = (f"https://api.stlouisfed.org/fred/series/observations"
                    f"?series_id={series_id}&api_key={api_key}&file_type=json"
-                   f"&sort_order=desc&limit=20")
+                   f"&sort_order=desc&limit={fetch_limit}")
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 data = json.loads(r.read().decode())
@@ -247,8 +253,14 @@ def get_fred_series(series_id):
         try:
             vals = fetch()
             latest   = vals[-1]
-            chg_last = vals[-1] - vals[-2]  if len(vals) > 1  else None
-            chg_yoy  = vals[-1] - vals[-13] if len(vals) > 13 else None
+            if is_daily:
+                # chg_last: cambio frente al valor de hace ~1 mes habil (para "sube/baja" reciente)
+                chg_last = vals[-1] - vals[-22] if len(vals) > 22 else None
+                # chg_yoy: cambio frente a hace ~1 año habil
+                chg_yoy  = vals[-1] - vals[-252] if len(vals) > 252 else None
+            else:
+                chg_last = vals[-1] - vals[-2]  if len(vals) > 1  else None
+                chg_yoy  = vals[-1] - vals[-13] if len(vals) > 13 else None
             _fred_cache[series_id] = [latest, chg_last, chg_yoy]
             save_fred_cache(_fred_cache)
             return latest, chg_last, chg_yoy
