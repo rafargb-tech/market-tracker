@@ -1388,6 +1388,11 @@ def main():
     # if gumroad_key:
     #     upload_to_gumroad(gumroad_key, "market_tracker", output, today_str)
 
+    print("\n📊 Publicando en Google Sheets...")
+    sheet_id    = os.environ.get("GOOGLE_SHEET_ID", "")
+    sa_json_str = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    publish_to_google_sheet(output, sheet_id, sa_json_str)
+
     print("\n📣 Enviando a Discord...")
     import os
     webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
@@ -1529,6 +1534,41 @@ def send_to_make(webhook_url, title, body_html, today_str, phase_name):
             return True
     except Exception as e:
         print(f"   ⚠️  Error enviando a Make: {e}")
+        return False
+
+
+def publish_to_google_sheet(output_path, sheet_id, sa_json_str):
+    """
+    Sube el Excel del día al Google Sheet fijo (mismo ID → mismo enlace permanente).
+    Requiere que el Sheet ya exista y esté compartido como Editor con la service account.
+    No lanza excepción hacia main(): si falla, avisa y el resto del pipeline sigue.
+    """
+    if not sheet_id or not sa_json_str:
+        print("   ⚠️  GOOGLE_SHEET_ID o GOOGLE_SERVICE_ACCOUNT_JSON no configurados, saltando Google Sheets.")
+        return False
+    try:
+        import json
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+
+        creds_info = json.loads(sa_json_str)
+        creds = service_account.Credentials.from_service_account_info(
+            creds_info, scopes=["https://www.googleapis.com/auth/drive"]
+        )
+        drive = build("drive", "v3", credentials=creds)
+        media = MediaFileUpload(
+            output_path,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            resumable=False,
+        )
+        # Sube el contenido nuevo sobre el MISMO fileId → Drive lo reconvierte a Sheets
+        # y el enlace no cambia nunca.
+        drive.files().update(fileId=sheet_id, media_body=media).execute()
+        print(f"   ✅ Google Sheet actualizado: https://docs.google.com/spreadsheets/d/{sheet_id}/edit")
+        return True
+    except Exception as e:
+        print(f"   ⚠️  Error publicando en Google Sheets: {e}")
         return False
 
 
