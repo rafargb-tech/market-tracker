@@ -24,7 +24,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install yfinance openpyxl pillow
+        run: pip install yfinance openpyxl pillow google-api-python-client google-auth
 
       - name: Download cache artifacts
         uses: actions/download-artifact@v4
@@ -42,6 +42,8 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           GUMROAD_API_KEY: ${{ secrets.GUMROAD_API_KEY }}
           MAKE_ADVFN_URL: ${{ secrets.MAKE_ADVFN_URL }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
 
       - name: Upload cache artifacts
         uses: actions/upload-artifact@v4
