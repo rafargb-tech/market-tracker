@@ -1680,53 +1680,120 @@ def fetch_market_context(today_str):
                 out.append(t)
         return out
 
+    # Palabras clave para clasificar contenido por region
+    ASIA_KW  = ("asia", "nikkei", "hang seng", "kospi", "shanghai", "china", "chinese",
+                "japan", "japanese", "tokyo", "yen", "seoul", "hong kong", "australia",
+                "asx", "topix", "pboc", "boj", "sensex", "nifty", "india")
+    EUR_KW   = ("europe", "european", "dax", "ftse", "cac", "stoxx", "euro ", "eur/usd",
+                "eurusd", "ecb", "bund", "gilt", "france", "french", "german", "italy",
+                "italian", "spain", "spanish", "uk ", "britain")
+    COMM_KW  = ("oil", "crude", "wti", "brent", "gold", "silver", "copper", "commodit",
+                "opec", "natural gas", "bullion", "precious metal")
+
+    def tag_of(text):
+        low = text.lower()
+        if any(w in low for w in COMM_KW): return "COMMOD"
+        if any(w in low for w in ASIA_KW): return "ASIA"
+        if any(w in low for w in EUR_KW):  return "EUR"
+        return "OTHER"
+
+    def sentences_matching(text, keywords, prefix=""):
+        out = []
+        if not text:
+            return out
+        for sent in re.split(r'(?<=[.!?])\s+', text):
+            if any(w in sent.lower() for w in keywords) and len(sent) > 40:
+                out.append(prefix + sent.strip())
+        return out
+
     texts = []
     FL = "https://www.forexlive.com"
 
+    # --- 1. Portada: titulares (pulso del momento, pre-market USA) ---
     home = fetch_url(FL + "/")
+    headlines = []
     if home:
-        # (a) Titulares de portada: pulso del dia con cifras
         clean = re.sub(r"<(script|style|nav|svg)[^>]*>.*?</\1>", " ", home, flags=re.DOTALL | re.IGNORECASE)
         blocks = re.findall(r"<(?:h1|h2|h3|h4)[^>]*>(.*?)</(?:h1|h2|h3|h4)>", clean, re.DOTALL | re.IGNORECASE)
-        headlines, seen = [], set()
+        seen = set()
         for b in blocks:
             t = clean_html_text(b)
             if len(t) > 35 and t not in seen and not t.lower().startswith(("search", "access", "get ")):
-                seen.add(t)
-                headlines.append(t)
-        if headlines:
-            print(f"   \u2705 Forexlive titulares: {len(headlines)}")
-            texts.append("[TITULARES DE HOY (Forexlive)]\n" + "\n".join(f"- {h}" for h in headlines[:20]))
+                seen.add(t); headlines.append(t)
 
-        # (b) Session wraps y noticias con datos: el analisis con cifras
-        links = re.findall(r'href="(/(?:news|technical-analysis|central-bank)/[^"]+)"', home)
-        seen_l = set(); article_urls = []
-        for l in links:
-            if l not in seen_l:
-                seen_l.add(l); article_urls.append(FL + l)
+    # --- 2. Archivo de wraps: garantiza EUROPA y EEUU del dia (aunque no esten en portada) ---
+    arch = fetch_url(FL + "/tag/session-wrap/")
+    wrap_links = []
+    if arch:
+        wrap_links = list(dict.fromkeys(
+            re.findall(r'href="(/news/[^"]*(?:wrap|session)[^"]*)"', arch, re.IGNORECASE)))
+    eur_wraps  = [w for w in wrap_links if "european" in w.lower()]
+    ame_wraps  = [w for w in wrap_links if "americas" in w.lower() or "america" in w.lower()]
+    asia_wraps = [w for w in wrap_links if "asia" in w.lower() or "asian" in w.lower()]
 
-        wraps = [u for u in article_urls if "wrap" in u.lower() or "session" in u.lower()]
-        others = [u for u in article_urls if u not in wraps]
-        picked = wraps[:3] + others[:4]
+    def read_wrap(path):
+        h = fetch_url(FL + path)
+        if not h:
+            return None
+        p = extract_paragraphs(h, 50)
+        return " ".join(p)[:1600] if p else None
 
-        for url in picked:
-            html = fetch_url(url)
-            if not html:
-                continue
-            paras = extract_paragraphs(html, min_len=50)
-            paras = [p for p in paras if "forexlive" not in p.lower() and "sign up" not in p.lower()]
-            if paras:
-                label = "SESSION WRAP" if url in wraps else "NOTICIA"
-                slug = url.rstrip("/").split("/")[-1][:60]
-                body = " ".join(paras)[:1400]
-                texts.append(f"[{label}: {slug}]\n{body}")
-        n_articles = sum(1 for t in texts if t.startswith("[SESSION") or t.startswith("[NOTICIA"))
-        print(f"   \u2705 Forexlive articulos: {n_articles}")
+    eur_text  = read_wrap(eur_wraps[0])  if eur_wraps  else None
+    ame_text  = read_wrap(ame_wraps[0])  if ame_wraps  else None
+    asia_text = read_wrap(asia_wraps[0]) if asia_wraps else None
+
+    # --- 3. Clasificar titulares de portada por region ---
+    by_tag = {"ASIA": [], "EUR": [], "COMMOD": [], "OTHER": []}
+    for h in headlines:
+        by_tag[tag_of(h)].append(h)
+
+    # --- 4. Construir contexto etiquetado por region ---
+    # EEUU: titulares pre-market + wrap americano (cierre sesion previa)
+    if by_tag["OTHER"]:
+        texts.append("[EEUU / PRE-MARKET - titulares de hoy]\n" +
+                     "\n".join(f"- {h}" for h in by_tag["OTHER"][:8]))
+    if ame_text:
+        texts.append("[EEUU - cierre sesion previa (wrap americano)]\n" + ame_text)
+
+    # EUROPA: wrap europeo + titulares
+    if eur_text:
+        texts.append("[EUROPA - sesion de hoy (wrap europeo)]\n" + eur_text)
+    if by_tag["EUR"]:
+        texts.append("[EUROPA - titulares]\n" + "\n".join(f"- {h}" for h in by_tag["EUR"][:6]))
+
+    # ASIA: wrap asiatico (raro) + titulares asiaticos + menciones rascadas de los otros wraps
+    asia_bits = []
+    if asia_text:
+        asia_bits.append(asia_text)
+    if by_tag["ASIA"]:
+        asia_bits.append("\n".join(f"- {h}" for h in by_tag["ASIA"][:6]))
+    for src in (eur_text, ame_text):
+        asia_bits.extend(sentences_matching(src, ASIA_KW, prefix="(via wrap) "))
+    asia_bits = list(dict.fromkeys(asia_bits))
+    if asia_bits:
+        texts.append("[ASIA - lo disponible hoy]\n" + "\n".join(asia_bits[:6]))
     else:
-        print("   \u26a0\ufe0f  Forexlive no disponible")
+        texts.append("[ASIA - SIN DATOS en la fuente a esta hora]")
 
-    # Respaldo: Phillip Capital (por si Forexlive fallara por completo)
-    if not texts:
+    # COMMODITIES: titulares de commodities + menciones de oro/crudo/metales en los wraps
+    comm_bits = list(by_tag["COMMOD"][:5])
+    for src in (eur_text, ame_text):
+        comm_bits.extend(sentences_matching(src, COMM_KW))
+    comm_bits = list(dict.fromkeys(comm_bits))
+    if comm_bits:
+        texts.append("[COMMODITIES - oro, crudo, metales]\n" +
+                     "\n".join(f"- {c}" for c in comm_bits[:8]))
+
+    print(f"   \u2705 Forexlive: {len(headlines)} titulares | "
+          f"wraps EUR={bool(eur_text)} EEUU={bool(ame_text)} ASIA={bool(asia_text)} | "
+          f"asia_bits={len(asia_bits)} comm_bits={len(comm_bits)}")
+
+    # Forexlive se considera util solo si trajo contenido real (titulares o algun wrap).
+    forexlive_ok = bool(headlines) or bool(eur_text) or bool(ame_text)
+
+    # Respaldo: Phillip Capital (solo si Forexlive no trajo nada util)
+    if not forexlive_ok:
+        texts = []  # descartar el bloque "ASIA SIN DATOS" suelto
         try:
             from datetime import datetime as _dt
             dt = _dt.strptime(today_str, "%Y-%m-%d")
@@ -1792,12 +1859,14 @@ El newsletter sigue SIEMPRE este orden de nueve bloques. Cada bloque es UN parra
 1. APERTURA con los futuros: como vienen los futuros de EEUU hoy y el tono general de la sesion que arranca.
 2. CIERRE ANTERIOR: que dejo la sesion previa y las noticias relevantes desde el ultimo Market Tracker.
 3. CITAS MACRO: los datos macro y eventos relevantes de los proximos 3-4 dias (inflacion, empleo, bancos centrales, earnings importantes).
-4. MERCADOS EEUU: movimientos relevantes, indices, acciones concretas con sus cifras.
-5. MERCADOS EUROPA: como cerraron o se mueven las plazas europeas, con datos.
-6. MERCADOS ASIA: Nikkei, Hang Seng, KOSPI, China, con sus movimientos.
-7. COMMODITIES: petroleo, oro, y otros relevantes, con su precio y su causa.
+4. MERCADOS EEUU: usa los bloques [EEUU...]. Movimientos relevantes, indices, acciones concretas con sus cifras.
+5. MERCADOS EUROPA: usa los bloques [EUROPA...]. Como cerraron o se mueven las plazas europeas (DAX, FTSE, CAC), el euro, con datos concretos.
+6. MERCADOS ASIA: usa el bloque [ASIA...]. Si el bloque dice "SIN DATOS", NO inventes cifras ni indices: despacha Asia en UNA sola frase honesta reconociendo que a esta hora la sesion asiatica ya cerro y no hay lectura fresca, o apoyate solo en lo que menciones de Asia aparezca "(via wrap)". Nunca te inventes niveles del Nikkei o de China.
+7. COMMODITIES: usa el bloque [COMMODITIES...]. Es un bloque de PRIMER nivel, no un relleno: petroleo y oro con su precio y su causa (geopolitica, dolar, yields). Dale el mismo peso que a EEUU o Europa.
 8. QUE ESPERAR: sintesis de lo que el lector debe vigilar en las proximas horas y dias.
 9. SPI Y SECTORES: cierre BREVE, una o dos frases, conectando la fase del ciclo con los sectores. Es la nota al pie, no el tema.
+
+EL CONTEXTO VIENE ETIQUETADO POR REGION entre corchetes ([EEUU...], [EUROPA...], [ASIA...], [COMMODITIES...]). Cada etiqueta alimenta su bloque correspondiente. No mezcles: lo que esta bajo [EUROPA] va al bloque 5, lo de [COMMODITIES] al bloque 7, etc.
 
 REGLA DE ORO ANTI-REPETICION (critica): cada dato, cifra, tema o evento se menciona UNA SOLA VEZ, en el bloque que le corresponde y en ningun otro. El CPI o dato macro que viene vive solo en el bloque 3 (citas macro), no lo repitas en apertura ni en que esperar. Ormuz y el petroleo viven solo en commodities. Cada divisa o accion en su bloque. Si un dato ya se uso en un bloque, los siguientes NO lo vuelven a mencionar. El bloque 8 (que esperar) no repite la agenda del 3: es una sintesis de tono y riesgo, no una lista de datos ya dichos.
 
