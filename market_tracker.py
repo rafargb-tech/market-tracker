@@ -124,7 +124,6 @@ MACRO_DATA = {
         ("10Y-2Y Spread",     "T10Y2Y",                "pts", "FRED", "Negative = inverted curve"),
         ("VIX",               "^VIX",                  "pts", "YF",   ">30 = high fear"),
         ("DXY (USD Index)",   "DX-Y.NYB",              "pts", "YF",   "Trade-weighted USD"),
-        ("OECD CLI",          "USALOLITONOSTSAM",      "pts", "FRED", "CLI >100 expansión, <100 contracción"),
         ("CFNAI",             "CFNAI",                 "pts", "FRED", "Chicago Fed. <-0.7 = recesión"),
     ],
     "EURO ZONE": [
@@ -254,10 +253,10 @@ def get_fred_series(series_id):
             vals = fetch()
             latest   = vals[-1]
             if is_daily:
-                # chg_last: cambio frente al valor de hace ~1 mes habil (para "sube/baja" reciente)
-                chg_last = vals[-1] - vals[-22] if len(vals) > 22 else None
-                # chg_yoy: cambio frente a hace ~1 año habil
-                chg_yoy  = vals[-1] - vals[-252] if len(vals) > 252 else None
+                # DFEDTARU/DFEDTARL publican los 7 días de la semana (incluye fines de semana),
+                # así que 1 mes = 30 obs y 1 año = 365 obs (no 22/252 como en series hábiles).
+                chg_last = vals[-1] - vals[-31]  if len(vals) > 31  else None
+                chg_yoy  = vals[-1] - vals[-366] if len(vals) > 366 else None
             else:
                 chg_last = vals[-1] - vals[-2]  if len(vals) > 1  else None
                 chg_yoy  = vals[-1] - vals[-13] if len(vals) > 13 else None
@@ -275,6 +274,56 @@ def get_fred_series(series_id):
         return tuple(cached)
     print(f"     \u26a0\ufe0f  FRED {series_id}: {last_error} \u2014 sin cach\xe9 disponible")
     return None, None, None
+
+
+def get_fred_history(series_id, limit=300):
+    """Últimas `limit` observaciones válidas de una serie diaria de FRED (más antigua primero).
+    Para medias móviles (tipo real, crédito). 2 intentos; si falla, usa la última copia en caché."""
+    global _fred_cache
+    import urllib.request, json, os, time
+
+    if _fred_cache is None:
+        _fred_cache = load_fred_cache()
+    cache_key = f"{series_id}_hist"
+    api_key = os.environ.get("FRED_API_KEY", "")
+    last_error = None
+    for attempt in range(2):
+        try:
+            if api_key:
+                url = (f"https://api.stlouisfed.org/fred/series/observations"
+                       f"?series_id={series_id}&api_key={api_key}&file_type=json"
+                       f"&sort_order=desc&limit={limit}")
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    data = json.loads(r.read().decode())
+                vals = [float(o["value"]) for o in reversed(data.get("observations", []))
+                        if o["value"] not in (".", "")]
+            else:
+                url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    lines = r.read().decode().strip().split("\n")[1:]
+                vals = []
+                for line in lines:
+                    parts = line.split(",")
+                    if len(parts) == 2 and parts[1].strip() not in ("", "."):
+                        try: vals.append(float(parts[1]))
+                        except ValueError: pass
+                vals = vals[-limit:]
+            if not vals:
+                raise ValueError("No data")
+            _fred_cache[cache_key] = vals
+            save_fred_cache(_fred_cache)
+            return vals
+        except Exception as e:
+            last_error = e
+            if attempt == 0:
+                time.sleep(5)
+    if cache_key in _fred_cache:
+        print(f"     \u26a0\ufe0f  FRED {series_id} (historial) falla ({last_error}) \u2014 usando cach\xe9")
+        return _fred_cache[cache_key]
+    print(f"     \u26a0\ufe0f  FRED {series_id} (historial): {last_error} \u2014 sin cach\xe9 disponible")
+    return None
 
 
 # ── Historial SPI diario ──────────────────────────────────────────────────────
@@ -297,9 +346,10 @@ def save_spi_history(today_str, degrees, phase_idx, signals):
         "fed":      sv("Fed Funds"),
         "curva":    sv("Curva 10Y-2Y"),
         "y10":      sv("10Y Yield"),
-        "cli":      sv("OECD CLI"),
         "cfnai":    sv("CFNAI"),
         "vix_ma25": sv("VIX MA25/200"),
+        "real10y":  sv("Tipo real 10Y"),
+        "hy_oas":   sv("Crédito HY"),
     }
 
     # Cargar historial existente
@@ -602,6 +652,7 @@ def detect_cycle_phase(macro_results, prices_daily=None):
     0-90: ExpT | 90-180: ExpL | 180-270: RecT | 270-360: RecL
     """
     import math
+    import pandas as pd  # viene como dependencia de yfinance
 
     EXP_T, EXP_L, REC_T, REC_L = 45, 135, 225, 315
 
@@ -632,7 +683,6 @@ def detect_cycle_phase(macro_results, prices_daily=None):
     _, fed_yoy             = get_val_yoy("UNITED STATES", "Fed Funds Rate")
     spread_val, spread_chg = get_val("US YIELD CURVE", "10Y - 2Y")
     y10_val,    y10_chg    = get_val("US YIELD CURVE", "US 10Y Yield")
-    cli_val,    cli_chg    = get_val("UNITED STATES", "OECD CLI")
     cfnai_val,  cfnai_chg  = get_val("UNITED STATES", "CFNAI")
 
     # ── Señales derivadas ─────────────────────────────────────────────────────
@@ -666,16 +716,8 @@ def detect_cycle_phase(macro_results, prices_daily=None):
     y10_falling = y10_chg is not None and y10_chg < 0
     y10_txt = ("▲ Subiendo" if y10_rising else ("▼ Bajando" if y10_falling else "→ Estable")) if y10_val else "N/A"
 
-    cli_expanding   = cli_val is not None and cli_val > 100.2
-    cli_contracting = cli_val is not None and cli_val < 99.5
-    cli_rising_bool = cli_chg is not None and cli_chg > 0
-    cli_falling_bool= cli_chg is not None and cli_chg < 0
-
-    if cli_val is not None:
-        cli_base = "▲ Expansión" if cli_expanding else ("▼ Contracción" if cli_contracting else "→ Neutral")
-        cli_txt  = cli_base + (" ↑" if cli_rising_bool else " ↓")
-    else:
-        cli_txt = "N/A"
+    # OECD CLI retirado (nov-2026): la serie FRED USALOLITONOSTSAM no publica desde ene-2024
+    # y votaba siempre el mismo valor congelado (~160°, 12% del peso).
 
     cfnai_positive = cfnai_val is not None and cfnai_val > 0.1
     cfnai_recession= cfnai_val is not None and cfnai_val < -0.7
@@ -750,15 +792,6 @@ def detect_cycle_phase(macro_results, prices_daily=None):
             a, w = interp(spread_val, -1.0, 0, 225, 180, 7, 5)
         votes.append((a, w))
 
-    # OECD CLI (peso máx 8) — interpolación continua alrededor de 100
-    if cli_val is not None:
-        # 97 → RecT(225°,8) | 100 → neutro(157°,4) | 103 → ExpT(45°,8)
-        if cli_val >= 100:
-            a, w = interp(cli_val, 100, 103, 157, 45, 4, 8)
-        else:
-            a, w = interp(cli_val, 97, 100, 225, 157, 8, 4)
-        votes.append((a, w))
-
     # CFNAI (peso máx 5) — interpolación continua
     if cfnai_val is not None:
         # -1.0 → RecT(225°,5) | 0 → ExpL(135°,3) | +1.0 → ExpT(45°,5)
@@ -767,6 +800,41 @@ def detect_cycle_phase(macro_results, prices_daily=None):
         else:
             a, w = interp(cfnai_val, -1.0, 0, 225, 135, 5, 3)
         votes.append((a, w))
+
+    # Tipo real 10Y (TIPS, FRED DFII10) (peso máx 7) — MA25 por nivel + velocidad a 3 meses
+    # Nivel: 0% → ExpT(45°,7) | 1.0% (mediana 2003-2026) → ExpL(135°,4) | 3.0% → RecT(225°,7)
+    # Velocidad: cambio de la MA25 en 63 sesiones; +50 pb → +20° (máx ±20°)
+    signals_real = ("N/A", None, None)
+    real_hist = get_fred_history("DFII10", 300)
+    if real_hist and len(real_hist) >= 90:
+        rs = pd.Series(real_hist)
+        real_ma25 = rs.rolling(25).mean()
+        real_lvl  = float(real_ma25.iloc[-1])
+        real_chg  = float(real_ma25.iloc[-1] - real_ma25.iloc[-64])
+        if real_lvl <= 1.0:
+            a, w = interp(real_lvl, 0.0, 1.0, 45, 135, 7, 4)
+        else:
+            a, w = interp(real_lvl, 1.0, 3.0, 135, 225, 4, 7)
+        a = max(0, min(270, a + max(-20, min(20, real_chg * 40))))
+        votes.append((a, w))
+        real_base  = "Restrictivo" if real_lvl >= 2.0 else ("Neutral" if real_lvl >= 1.0 else "Laxo")
+        real_arrow = " ↑" if real_chg > 0.05 else (" ↓" if real_chg < -0.05 else " →")
+        signals_real = (real_base + real_arrow, real_lvl, real_chg)
+
+    # Crédito High Yield (ICE BofA OAS, FRED BAMLH0A0HYM2) (peso máx 4) — MA25 vs MA200
+    # Nivel: ≤3.0% (spreads tensos = complacencia de final de ciclo) → ExpL(135°,2.5) | 5.0% → RecT(225°,4)
+    # Tendencia: (MA25 - MA200) × 20, máx ±15°
+    signals_hy = ("N/A", None, None)
+    hy_hist = get_fred_history("BAMLH0A0HYM2", 300)
+    if hy_hist and len(hy_hist) >= 200:
+        hs = pd.Series(hy_hist)
+        hy_ma25  = float(hs.rolling(25).mean().iloc[-1])
+        hy_ma200 = float(hs.rolling(200).mean().iloc[-1])
+        a, w = interp(hy_ma25, 3.0, 5.0, 135, 225, 2.5, 4)
+        a = max(45, min(270, a + max(-15, min(15, (hy_ma25 - hy_ma200) * 20))))
+        votes.append((a, w))
+        hy_txt = "↑ Ampliándose" if hy_ma25 > hy_ma200 else "↓ Estrechándose"
+        signals_hy = (hy_txt, hy_ma25, hy_ma25 - hy_ma200)
 
     # VIX MA25/200 (peso máx 4) — interpolación continua por nivel y tendencia
     vix_ma25 = vix_ma200 = None
@@ -829,7 +897,8 @@ def detect_cycle_phase(macro_results, prices_daily=None):
         "Fed Funds":    (fed_txt,                                           fed_val,    fed_yoy),
         "Curva 10Y-2Y": (curve_txt,                                        spread_val, spread_chg),
         "10Y Yield":    (y10_txt,                                          y10_val,    y10_chg),
-        "OECD CLI":     (cli_txt,                                          cli_val,    cli_chg),
+        "Tipo real 10Y": signals_real,
+        "Crédito HY":   signals_hy,
         "CFNAI":        (cfnai_txt,                                        cfnai_val,  cfnai_chg),
         "VIX MA25/200": signals_vix,
     }
@@ -981,15 +1050,15 @@ def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str, degre
 
     # ── Cabecera bloque indicadores ──
     ws.merge_cells("A4:M4")
-    ws["A4"] = "  6 Pilares del Ciclo  (PIB · Empleo · Inflación · Fed Funds · Curva de Tipos · 10Y Yield · VIX MA25/200)"
+    ws["A4"] = "  Pilares del Ciclo  (PIB · Empleo · Inflación · Fed Funds · Curva · Tipo real 10Y · Crédito HY · CFNAI · VIX MA25/200)"
     ws["A4"].font = fnt(bold=True, color=LIGHT_GRAY, size=8)
     ws["A4"].fill = fill(HEADER_BG); ws["A4"].alignment = left(1)
     ws.row_dimensions[4].height = 13
 
     # ── Bloque de indicadores: 3 filas x 3 cols (A-I) + VIX en cols J-M ──────
     # Fila 5-7:  GDP · Desempleo · CPI
-    # Fila 8-10: Fed Funds · Curva · 10Y
-    # Fila 11-13: OECD CLI · CFNAI · VIX MA25/200
+    # Fila 8-10: Fed Funds · Curva · Tipo real 10Y
+    # Fila 11-13: Crédito HY · CFNAI · VIX MA25/200
     positive_keywords = {"▲ Creciendo", "▼ Bajando", "✓ Moderado", "Empinada ▲",
                          "Normalizando ↗", "▲ Expansión ↑", "▲ Sólido"}
 
@@ -1002,8 +1071,8 @@ def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str, degre
         c2 = ws.cell(row=row+1, column=col, value=f"{val_str}{chg_str}")
         c2.font = fnt(bold=True, size=9); c2.fill = fill(DARK_BG); c2.alignment = center()
         ws.merge_cells(start_row=row+1, start_column=col, end_row=row+1, end_column=col+1)
-        is_green = any(k in status for k in ("Creciendo","Bajando","Moderado","Empinada","Normalizando","Expansión ↑","Sólido"))
-        is_red   = any(k in status for k in ("Cayendo","Subiendo","Alto","Invertida","Contracción","Recesión","Deteriorando"))
+        is_green = any(k in status for k in ("Creciendo","Bajando","Moderado","Empinada","Normalizando","Expansión ↑","Sólido","Laxo","Estrechándose"))
+        is_red   = any(k in status for k in ("Cayendo","Subiendo","Alto","Invertida","Contracción","Recesión","Deteriorando","Restrictivo","Ampliándose"))
         tc = "27AE60" if is_green else ("E74C3C" if is_red else MID_GRAY)
         c3 = ws.cell(row=row+2, column=col, value=status)
         c3.font = fnt(bold=True, color=tc, size=8); c3.fill = fill(DARK_BG); c3.alignment = center()
@@ -1020,16 +1089,16 @@ def write_spi_sheet(ws, phase_idx, signals, score, sector_data, today_str, degre
     for r in range(5,8):
         for c in [7]: ws.cell(row=r, column=c).fill = fill(DARK_BG)
 
-    # Fila 2 de indicadores (fila 8): Fed Funds · Curva · 10Y
+    # Fila 2 de indicadores (fila 8): Fed Funds · Curva · Tipo real 10Y
     write_indicator_block(ws, 8, 1,  "Fed Funds",    *signals["Fed Funds"])
     write_indicator_block(ws, 8, 3,  "Curva 10Y-2Y", *signals["Curva 10Y-2Y"])
-    write_indicator_block(ws, 8, 5,  "10Y Yield",    *signals["10Y Yield"])
+    write_indicator_block(ws, 8, 5,  "Tipo real 10Y", *signals.get("Tipo real 10Y", ("N/A", None, None)))
     # Separador
     for r in range(8,11):
         for c in [7]: ws.cell(row=r, column=c).fill = fill(DARK_BG)
 
-    # Fila 3 de indicadores (fila 11): OECD CLI · CFNAI · VIX MA25/200
-    write_indicator_block(ws, 11, 1, "OECD CLI", *signals.get("OECD CLI", ("N/A", None, None)))
+    # Fila 3 de indicadores (fila 11): Crédito HY · CFNAI · VIX MA25/200
+    write_indicator_block(ws, 11, 1, "Crédito HY", *signals.get("Crédito HY", ("N/A", None, None)))
     write_indicator_block(ws, 11, 3, "CFNAI",    *signals.get("CFNAI",    ("N/A", None, None)))
     vix_sig = signals.get("VIX MA25/200", ("N/A", None, None))
     write_indicator_block(ws, 11, 5, "VIX MA25/200", *vix_sig)
